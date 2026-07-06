@@ -78,3 +78,8 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 - [ ] H1-30 (M6) Provision hosting per ADR 0003 (app + Postgres+pgvector + Langfuse or hosted alternative), deploy, run Alembic + ingest — done when /healthz is green on the public URL. [deps: H1-03, H1-22, H1-27]
 - [ ] H1-31 (M6) Public metrics page wired to the deployed metrics endpoint; final eval report generated FROM the deployed config and committed — done when the URL shows live p50/p95 + cost/query and the report is on main. [deps: H1-26, H1-29, H1-30]
 - [ ] H1-32 (M6) README failure-modes section + writeup #1 drafted from `docs/plan/WRITEUPS.md` outline; demo sent to the 10 named people (the list and the send log are maintained privately; check the log before contacting anyone) (@Chris sends) — done when writeup #1 is published and all 10 sends are logged. [deps: H1-30, H1-31]
+
+## Standalone-repo follow-ups (seeded by the 2026-07-06 extraction)
+
+- [ ] H1-33 (M5) Migrate corpus identity from `registries/sources.yml` to `data/corpus_manifest.yml`: `load_source_registry` and the slice ingest read the manifest (sha256 + retrieval_date recorded by `scripts/fetch_corpus.py`), then the trimmed registry copy retires — done when the suite passes with `registries/` deleted. [deps: —]
+- [ ] H1-34 (M6) Self-contained corpus acquisition: `scripts/fetch_corpus.py` covers every manifest entry (record the PENDING sha256s on first fetch) and the tabular CSVs are produced or vendored with provenance in-repo, removing the upstream wealthlens-hq pipeline dependency — done when `make fetch-corpus && make ingest-slice` works from a fresh clone against an empty database. [deps: H1-33]
