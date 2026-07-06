@@ -1,4 +1,17 @@
-# Fetched corpus documents (reproducible via `make ingest-slice`; never committed)
+# Fetched corpus documents (reproducible via `make ingest-slice` / `scripts/fetch_corpus.py`; never committed)
 data/corpus/
+data/raw/
+# Pipeline-produced tabular CSVs (build artifacts; see tasks/hero1-backlog.md standalone follow-ups)
+data/processed/
 # Local env
 .env
+# Python build/tool artifacts
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+*.egg-info/
+build/
+dist/

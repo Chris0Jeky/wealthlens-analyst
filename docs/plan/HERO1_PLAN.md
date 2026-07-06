@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-11
 Status: **locked plan** — do not re-architect. Open decisions live in ADR 0003 only.
-Backlog: `tasks/hero1-backlog.md` · ADRs: `docs/adr/0001..0003` · Product memory: `projects/wealthlens-analyst/CLAUDE.md`
+Backlog: `tasks/hero1-backlog.md` · ADRs: `docs/adr/0001..0003` · Product memory: `CLAUDE.md` (repo root since the 2026-07-06 extraction)
 
 **Positioning:** "I make LLM systems cheap, reliable, and provably valuable in production."
 
@@ -22,7 +22,7 @@ other source before the live URL exists is forbidden.**
 - [ ] Branch `chore/hero1-kickoff` carries: this plan, `tasks/hero1-backlog.md`
       (25-40 half-day tasks; the first ten blocked on nothing outside the
       backlog itself — H1-05..10 chain by design), ADRs 0001-0003, product
-      scaffolding under `projects/wealthlens-analyst/` (stubs import cleanly),
+      scaffolding under `src/wealthlens_analyst/` (stubs import cleanly),
       eval skeleton with 20 DRAFT golden questions, Makefile + CI extensions,
       `.env.example`.
 - [ ] Corpus slice tagged in `registries/sources.yml` (`analyst_corpus: true`

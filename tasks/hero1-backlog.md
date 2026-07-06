@@ -17,7 +17,7 @@ Last updated: 2026-07-03 (session 17: H1-19 citation resolution shipped; next un
 2. **H1-12** — pure RRF fusion (`retrieval/fuse_rrf.py`), no deps, fully
    unit-testable offline. Good warm-up or parallel PR.
 3. **H1-06/07** — document fetch + tabular chunking (after H1-01).
-4. Waiting on Chris (see `tasks/ACTION-REQUIRED.md` items 6-7): H1-02 golden
+4. Waiting on Chris (tracked in his private planning repo): H1-02 golden
    questions review; ADR 0003 **D3 hosting**.
 
 Local env: `docker compose up -d analyst-db` (port **15432**); use
@@ -77,4 +77,4 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 
 - [ ] H1-30 (M6) Provision hosting per ADR 0003 (app + Postgres+pgvector + Langfuse or hosted alternative), deploy, run Alembic + ingest — done when /healthz is green on the public URL. [deps: H1-03, H1-22, H1-27]
 - [ ] H1-31 (M6) Public metrics page wired to the deployed metrics endpoint; final eval report generated FROM the deployed config and committed — done when the URL shows live p50/p95 + cost/query and the report is on main. [deps: H1-26, H1-29, H1-30]
-- [ ] H1-32 (M6) README failure-modes section + writeup #1 drafted from `docs/plan/WRITEUPS.md` outline; demo sent to the 10 named people (checking the private outreach logs `../hq-private/projects/wealthlens/outreach/` first) (@Chris sends) — done when writeup #1 is published and 10 sends are logged in `../hq-private/projects/wealthlens/outreach/emails-sent.md`. [deps: H1-30, H1-31]
+- [ ] H1-32 (M6) README failure-modes section + writeup #1 drafted from `docs/plan/WRITEUPS.md` outline; demo sent to the 10 named people (the list and the send log are maintained privately; check the log before contacting anyone) (@Chris sends) — done when writeup #1 is published and all 10 sends are logged. [deps: H1-30, H1-31]

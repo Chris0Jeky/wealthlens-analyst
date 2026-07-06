@@ -2,8 +2,8 @@
 
 Last updated: 2026-06-11
 Cadence: writeup #1 ships with M6 (week 6); #2 and #3 follow at fortnight intervals.
-Voice: per `strategy/branding-playbook.md` — confident, data-driven, non-partisan,
-personal where useful. Every statistic cited.
+Voice: confident, data-driven, non-partisan, personal where useful. Every
+statistic cited.
 
 ## 1. Turning 11 UK data pipelines into a RAG corpus with provenance
 **Slot:** week 6 (with the M6 launch).
@@ -45,19 +45,9 @@ personal where useful. Every statistic cited.
 - What honesty costs: the latency/cost price of abstention checks and citation
   verification, and why it's worth paying.
 
-## 10 named people (demo send list — placeholder, Chris to fill)
+## 10 named people (demo send list)
 
-> Rule: check `../hq-private/projects/wealthlens/outreach/contacts.md` and
-> `emails-sent.md` (private repo) before contacting anyone; log every send
-> in that `emails-sent.md`.
-
-1. _TBD — Tax Justice UK contact_
-2. _TBD — Patriotic Millionaires UK contact_
-3. _TBD — The Equality Trust contact_
-4. _TBD — Gary Stevenson (@garyseconomics)_
-5. _TBD — Resolution Foundation researcher_
-6. _TBD — IFS / TaxLab researcher_
-7. _TBD — mySociety contact (network kept warm post-application)_
-8. _TBD — Middlesex University colleague (WP angle)_
-9. _TBD — engineering peer for technical feedback_
-10. _TBD — hiring-manager-profile reader for the portfolio angle_
+The list itself is maintained privately (it contains third-party contact
+information); every send is logged there before and after contact. Shape:
+7 practitioners/researchers + 3 journalists/civic-data people who could become
+real users of the live product.

@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (locked in the Hero #1 plan, 2026-06-11)
 - Deciders: Chris (plan locked before this session)
-- Scope: `projects/wealthlens-analyst/` (WealthLens v2)
+- Scope: this repo (WealthLens v2; extracted from the `wealthlens-hq` monorepo on 2026-07-06)
 
 ## Context
 

@@ -1,0 +1,123 @@
+# Frozen analyst corpus registry — trimmed copy carried out of wealthlens-hq
+# in the 2026-07-06 extraction (source of the copy: wealthlens-hq@32b4867
+# registries/sources.yml, entries tagged analyst_corpus: true).
+#
+# These 8 entries ARE the frozen v1 corpus slice (locked; adding any source
+# before the live URL exists is forbidden — see CLAUDE.md). The monorepo file
+# also serves dashboard/pipeline sources; those did not move. A follow-up task
+# migrates the code from this registry to data/corpus_manifest.yml.
+sources:
+- id: hmrc-cgt-statistics
+  name: HMRC Capital Gains Tax Statistics
+  url: https://assets.publishing.service.gov.uk/media/6878ac562bad77c3dae4dcef/Table_2_2025_Size_of_gain.ods
+  access_date: '2026-05-16'
+  format: ods
+  licence: OGL-3.0
+  update_pattern: annual
+  pipeline: fetch_hmrc_stats.py
+  analyst_corpus: true
+  notes: 'Distribution of capital gains by size of gain band. Shows concentration among top taxpayers.
+    Also fetches Table 1 (taxpayer counts, total gains, tax liabilities). 2025 edition.
+
+    '
+- id: ons-was-wealth
+  name: ONS Wealth and Assets Survey (WAS)
+  url: https://www.ons.gov.uk/file?uri=/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/datasets/totalwealthwealthingreatbritain/july2006tojune2016andapril2014tomarch2022/totalwealthtables.xlsx
+  access_date: '2026-05-30'
+  format: xlsx
+  licence: OGL-3.0
+  update_pattern: multi-year-wave
+  pipeline: fetch_ons_wealth.py
+  analyst_corpus: true
+  notes: 'Total household wealth and components, April 2020 to March 2022. Calibration anchors for the
+    synthetic population: Table 2.1 total wealth including private pension wealth £13.568tn; Table 2.2
+    total wealth by decile, including top-decile aggregate £5.523tn; bulletin main points give median
+    household wealth £293,700, top-decile threshold £1,200,500, top-1% threshold £3,121,500, top-1% wealth
+    share 10%, and component shares property 40%, pensions 35%, financial 14%, physical 10%. January 2025
+    edition. CAVEAT: WAS lost accredited official statistics status June 2025; response rate declined
+    to 41%; December 2024 DB pension methodology change reduced measured wealth by ~£2.3tn.
+
+    '
+- id: hmrc-tax-receipts
+  name: HMRC Tax and NIC Receipts
+  url: https://assets.publishing.service.gov.uk/media/67eaee6093e0a7b9eb1e7ae2/HMRC_Tax_and_NIC_Receipts_Monthly_and_Annual_Apr25.xlsx
+  access_date: '2026-05-16'
+  format: xlsx
+  licence: OGL-3.0
+  update_pattern: monthly
+  pipeline: fetch_tax_composition.py
+  analyst_corpus: true
+  notes: 'HMRC releases the Tax and NIC Receipts bulletin monthly (source cadence; the file is "Monthly_and_Annual").
+    WealthLens uses the ANNUAL receipts by type to compare work taxes (Income Tax + NICs) vs wealth taxes
+    (CGT + IHT + SDLT). April 2025 edition. Multi-year data from 2018-19 to 2023-24.
+
+    '
+- id: rf-intergenerational-audit-2024
+  name: Resolution Foundation — An intergenerational audit for the UK (2024)
+  url: https://www.resolutionfoundation.org/publications/intergenerational-audit-2024/
+  pdf_url: https://www.resolutionfoundation.org/app/uploads/2024/11/Intergenerationl-Audit-2024.pdf
+  access_date: '2026-06-11'
+  format: report
+  licence: CC BY-NC-ND 4.0
+  update_pattern: annual-ish (latest edition; no 2025 edition exists as of 2026-06-11)
+  pipeline: null
+  analyst_corpus: true
+  notes: '6th edition (Broome, Hale, Slaughter; DOI 10.63492/po886z; 73pp). Special focus: gifts, inheritances,
+    intergenerational transfers. ND licence (ENFORCEMENT PENDING H1-18): the answer composer must serve
+    RF spans as verbatim quote-with-citation + link to the full report, never paraphrase-as-ours; no code
+    enforces this yet, so it is documented here as a downstream obligation. PDF URL typo ("Intergenerationl")
+    is real. Distinct from the pipeline-fed resolution-generational-wealth entry (that is the derived
+    chart series).'
+- id: ifs-r188-inheritances-lifecycle
+  name: IFS R188 — Inheritances and inequality over the life cycle (2021)
+  url: https://ifs.org.uk/publications/inheritances-and-inequality-over-life-cycle-what-will-they-mean-younger-generations
+  pdf_url: https://ifs.org.uk/sites/default/files/output_url_files/R188-Inheritances-and-inequality-over-the-lifecycle%252520%2525281%252529.pdf
+  access_date: '2026-06-11'
+  format: report
+  licence: CC BY-NC 4.0
+  update_pattern: one-off
+  pipeline: null
+  analyst_corpus: true
+  notes: Bourquin, Joyce, Sturrock (Nuffield-funded; 95pp). Cohort projections of inheritance flows and
+    their effect on within/between-generation wealth inequality. IFS HTML is Cloudflare-gated; fetch the
+    PDF URL directly. The pdf_url is intentionally over-encoded (%252520...); IFS serves the file under
+    this exact path (web-verified 2026-06-11) - do NOT urldecode before fetching. H1-06 should assert
+    a 200 + application/pdf so a silent 404 fails loudly rather than ingesting an error page.
+- id: rf-before-the-fall-2025
+  name: 'Resolution Foundation — Before the fall: the distribution of household wealth in Britain (2025)'
+  url: https://www.resolutionfoundation.org/publications/before-the-fall/
+  pdf_url: https://www.resolutionfoundation.org/app/uploads/2025/10/Before-the-fall.pdf
+  access_date: '2026-06-11'
+  format: report
+  licence: CC BY-NC-ND 4.0
+  update_pattern: series (4th household-wealth audit)
+  pipeline: null
+  analyst_corpus: true
+  notes: 'Broome & Kanabar (DOI 10.63492/pcv793; 61pp). Latest comprehensive wealth distribution audit
+    on 2020-22 WAS data. ND licence (ENFORCEMENT PENDING H1-18): verbatim quote-with-citation only, never
+    paraphrase-as-ours - same downstream obligation as rf-intergenerational-audit-2024.'
+- id: ifs-green-budget-2023-iht
+  name: IFS — Reforming inheritance tax (Green Budget 2023, ch. 7)
+  url: https://ifs.org.uk/publications/reforming-inheritance-tax
+  pdf_url: https://ifs.org.uk/sites/default/files/2023-09/Reforming-inheritance-tax-1.pdf
+  access_date: '2026-06-11'
+  format: report
+  licence: CC BY-NC 4.0
+  update_pattern: one-off
+  pipeline: null
+  analyst_corpus: true
+  notes: 'Advani & Sturrock (58pp). Wealth-taxation analysis: IHT coverage, revenue path, reliefs/avoidance,
+    distributional impact of reform options.'
+- id: ifs-deaton-trends-wealth
+  name: IFS Deaton Review — Trends in income and wealth inequalities (OUP 2024)
+  url: https://academic.oup.com/ooec/article/3/Supplement_1/i103/7477701
+  pdf_url: https://ifs.org.uk/sites/default/files/2026-03/Trends-in-income-and-wealth-inequalities-IFS-Deaton-Review-of-Inequality-final.pdf
+  access_date: '2026-06-11'
+  format: report
+  licence: CC BY 4.0
+  update_pattern: one-off
+  pipeline: null
+  analyst_corpus: true
+  notes: Bourquin, Brewer, Wernham (DOI 10.1093/ooec/odad100; 135pp). Long-run wealth-vs-income inequality
+    framing. CC BY 4.0 applies to the OUP published version; cite the OUP article as canonical and ingest
+    the IFS-hosted final PDF (old chapter URL redirects).

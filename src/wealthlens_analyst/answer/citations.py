@@ -215,18 +215,19 @@ def _default_registry_path() -> Path:
     ``WEALTHLENS_REPO_ROOT`` overrides the search, for a non-editable install or
     deployed service where the package no longer sits inside the checked-out
     tree (the H1-30 shape). Otherwise walk up from this file to the ancestor
-    holding both ``registries/`` and ``projects/``. Mirrors
+    holding ``registries/sources.yml`` (the repo root; before the 2026-07-06
+    extraction the same walk found the shared monorepo registry). Mirrors
     ingest.slice_corpus._find_repo_root exactly, so both the ingest and the
-    citation paths resolve the shared registry the same way.
+    citation paths resolve the registry the same way.
     """
     override = os.environ.get("WEALTHLENS_REPO_ROOT")
     if override:
         return Path(override) / "registries" / "sources.yml"
     for parent in Path(__file__).resolve().parents:
-        if (parent / "registries").is_dir() and (parent / "projects").is_dir():
+        if (parent / "registries" / "sources.yml").is_file():
             return parent / "registries" / "sources.yml"
     raise RuntimeError(
-        "could not locate registries/sources.yml (no ancestor has both registries/ and projects/); "
+        "could not locate registries/sources.yml in any ancestor directory; "
         "set WEALTHLENS_REPO_ROOT to override"
     )
 

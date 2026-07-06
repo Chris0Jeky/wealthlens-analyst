@@ -2,12 +2,12 @@
 
 - Status: **Accepted** (locked in the Hero #1 plan, 2026-06-11)
 - Deciders: Chris (plan locked before this session)
-- Scope: `projects/wealthlens-analyst/` (WealthLens v2, evidence-backed research analyst)
+- Scope: this repo (WealthLens v2, evidence-backed research analyst; extracted from the `wealthlens-hq` monorepo on 2026-07-06)
 
-> Note on location: workspace decision records live in the private HQ repo
-> (`../hq-private/projects/wealthlens/memories/decisions/`, date-named; moved
-> there 2026-06-13). Product ADRs live here in `docs/adr/` (numbered) instead,
-> because they must travel with the product when it is extracted to its own repo.
+> Note on location: workspace/session decision records live in the
+> maintainer's private planning repo. Product ADRs live here in `docs/adr/`
+> (numbered) because they must travel with the product when it is extracted
+> to its own repo — which is exactly what happened on 2026-07-06.
 
 ## Context
 

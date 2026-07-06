@@ -500,7 +500,7 @@ def render_table_chunks(rows: Iterable[Mapping[str, str]], spec: TableSpec) -> l
 
 
 def _find_repo_root() -> Path:
-    """Locate the repo root (the dir holding both registries/ and projects/).
+    """Locate the repo root (the dir holding registries/sources.yml).
 
     WEALTHLENS_REPO_ROOT overrides the search, for non-editable installs where
     the package no longer sits inside the checked-out tree. Otherwise we walk up
@@ -511,10 +511,10 @@ def _find_repo_root() -> Path:
     if override:
         return Path(override)
     for parent in Path(__file__).resolve().parents:
-        if (parent / "registries").is_dir() and (parent / "projects").is_dir():
+        if (parent / "registries" / "sources.yml").is_file():
             return parent
     raise RuntimeError(
-        "could not locate repo root (no ancestor has both registries/ and projects/); "
+        "could not locate repo root (no ancestor holds registries/sources.yml); "
         "set WEALTHLENS_REPO_ROOT to override"
     )
 
@@ -683,8 +683,14 @@ def write_chunks(
 
 
 def _processed_dir_default() -> Path:
-    """The dashboard pipeline's processed-output directory (the tabular sources)."""
-    return _find_repo_root() / "projects" / "wealthlens-dashboard" / "data" / "processed"
+    """Where the tabular-source CSVs are expected: data/processed at the root.
+
+    These are the wealthlens-hq dashboard pipeline's processed outputs; since
+    the 2026-07-06 extraction they are produced there and copied here (or
+    passed explicitly via ``processed_dir``) until the self-contained corpus
+    fetch lands (standalone-repo follow-ups in tasks/hero1-backlog.md).
+    """
+    return _find_repo_root() / "data" / "processed"
 
 
 def ingest_slice(*, engine: Engine | None = None, processed_dir: Path | None = None) -> int:

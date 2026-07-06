@@ -100,7 +100,7 @@ Revisit only if M4's refusal checks can't reach green on thresholds alone.
 
 ## Dependency versions (verified against PyPI, 2026-06-11)
 
-Pinned as floors in `projects/wealthlens-analyst/pyproject.toml`:
+Pinned as floors in `pyproject.toml`:
 fastapi 0.136.3 · uvicorn 0.49.0 · pydantic 2.13.4 · SQLAlchemy 2.0.50 ·
 alembic 1.18.4 · pgvector (py) 0.4.2 · psycopg 3.3.4 · httpx 0.28.1 ·
 anthropic 0.109.1 · jsonschema 4.26.0 · ragas 0.4.3 · langfuse 4.7.1 ·
