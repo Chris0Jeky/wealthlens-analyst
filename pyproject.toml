@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wealthlens-analyst"
+version = "0.1.0.dev0"
+description = "WealthLens v2 — evidence-backed research analyst over official UK wealth statistics (citation-first RAG with honest abstention)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# Version floors verified against PyPI on 2026-06-11 (see ADR 0003 for the record).
+dependencies = [
+    "fastapi>=0.136.3",
+    "uvicorn[standard]>=0.49.0",
+    "pydantic>=2.13.4",
+    "sqlalchemy>=2.0.50",
+    "alembic>=1.18.4",
+    "pgvector>=0.4.2",
+    "psycopg[binary]>=3.3.4",
+    "httpx>=0.28.1",
+    # OpenAI: embeddings (text-embedding-3-small, ADR 0003 D2) and, from 2026-06-30,
+    # generation (gpt-5.4-mini — Chris's provider call). Used only inside
+    # llm/client.py (the SDK seam, ADR 0002). (The `anthropic` package was dropped
+    # when generation moved to OpenAI; re-add it if the seam ever serves Anthropic.)
+    "openai>=1.45.0",  # max_completion_tokens needs >=1.45 (chat.completions); verified against 2.44
+    # Read registries/sources.yml to resolve a chunk's source_id -> citable name + URL
+    # (answer/citations.py, H1-19). The registry is the single source of truth for a
+    # citation's source identity — never hard-coded here — so the analyst needs a YAML parser.
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.4",
+    # Repo convention: adopt mypy 2.x, cap at the next major (<3); match the monorepo (root pyproject).
+    "mypy>=1.10,<3",
+    # jsonschema sits in dev (not only evals) so CI's single `[dev]` install
+    # covers the golden-set deterministic checks without pulling ragas.
+    "jsonschema>=4.26.0",
+    # Stubs for the PyYAML runtime dep so strict mypy stays clean without a
+    # per-module ignore (CI installs `[dev]`, so the stubs are present there).
+    "types-PyYAML>=6.0.12",
+]
+evals = [
+    "jsonschema>=4.26.0",
+    "ragas>=0.4.3",
+]
+obs = [
+    "langfuse>=4.7.1",
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "opentelemetry-instrumentation-fastapi>=0.63b1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wealthlens_analyst"]
+
+# Lint/type conventions match the monorepo root (ruff rules) and the
+# wealthlens-sim package (strict mypy for new greenfield code).
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests", "evals"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["wealthlens_analyst"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["wealthlens_analyst"]
+
+# pgvector.sqlalchemy ships no py.typed marker; its Vector column type is used in
+# db.py and retrieval/dense.py (and migration 0002_embeddings). Ignore the missing
+# stubs for that package rather than scatter per-line ignores — strict checking
+# still applies to all of our own code.
+[[tool.mypy.overrides]]
+module = "pgvector.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

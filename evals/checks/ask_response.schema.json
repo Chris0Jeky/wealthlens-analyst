@@ -1,0 +1,183 @@
+{
+  "$defs": {
+    "AnswerResponse": {
+      "description": "A cited answer to an in-corpus question.\n\nAn answer is served ONLY when EVERY cited id resolved \u2014 \"answer\" means a\nfully-cited answer. The serving path refuses if any citation was pruned\n(fabricated / missing / unknown-source), so the body never carries a claim\nwhose citation could not be verified, and ``citations`` is always non-empty\n(``minItems: 1`` in the published schema). ``answer`` keeps only canonical\n``[chunk:<id>]`` markers for served citations; any drift / out-of-range\ncitation-shaped text the model emitted is stripped before serving.\n\n``mode`` has no default so the published schema marks the discriminator\n``required`` \u2014 a body without it is not a valid response.",
+      "properties": {
+        "answer": {
+          "title": "Answer",
+          "type": "string"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/CitationModel"
+          },
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "mode": {
+          "const": "answer",
+          "title": "Mode",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "question",
+        "answer",
+        "citations"
+      ],
+      "title": "AnswerResponse",
+      "type": "object"
+    },
+    "CitationModel": {
+      "description": "A resolved, render-ready citation (the wire form of answer.citations.Citation).\n\nCarries the full ADR 0001 \u00a74 provenance tuple (section/page/span) plus the\nregistry source name + URL and the ingestion access date, so every served\ncitation carries both a URL and an access date (the data-integrity rule).",
+      "properties": {
+        "access_date": {
+          "format": "date",
+          "title": "Access Date",
+          "type": "string"
+        },
+        "chunk_id": {
+          "title": "Chunk Id",
+          "type": "integer"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Section"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_name": {
+          "title": "Source Name",
+          "type": "string"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Span"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "source_id",
+        "source_name",
+        "document_id",
+        "section",
+        "page",
+        "span",
+        "url",
+        "access_date"
+      ],
+      "title": "CitationModel",
+      "type": "object"
+    },
+    "OverBudgetResponse": {
+      "description": "The monthly spend cap was exceeded (HTTP 429). Produced by the guard (H1-27).",
+      "properties": {
+        "mode": {
+          "const": "over_budget",
+          "title": "Mode",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "question",
+        "reason"
+      ],
+      "title": "OverBudgetResponse",
+      "type": "object"
+    },
+    "RefusalResponse": {
+      "description": "Honest abstention: the corpus does not support a cited answer (ADR 0003 D4).",
+      "properties": {
+        "mode": {
+          "const": "refusal",
+          "title": "Mode",
+          "type": "string"
+        },
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "question",
+        "reason"
+      ],
+      "title": "RefusalResponse",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "answer": "#/$defs/AnswerResponse",
+      "over_budget": "#/$defs/OverBudgetResponse",
+      "refusal": "#/$defs/RefusalResponse"
+    },
+    "propertyName": "mode"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/AnswerResponse"
+    },
+    {
+      "$ref": "#/$defs/RefusalResponse"
+    },
+    {
+      "$ref": "#/$defs/OverBudgetResponse"
+    }
+  ]
+}

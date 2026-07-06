@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wealthlens-analyst/golden_set",
+  "title": "Golden Q/A record (one JSONL line)",
+  "description": "Human-reviewed golden set. expected_answer and required_citations are written by a HUMAN reviewer (Chris) — agents must never fabricate them. status stays DRAFT until reviewed.",
+  "type": "object",
+  "required": ["id", "question", "category", "topic", "expected_behaviour", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^G-[0-9]{3}$"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 10
+    },
+    "category": {
+      "type": "string",
+      "enum": ["in_corpus", "out_of_corpus"]
+    },
+    "topic": {
+      "type": "string",
+      "description": "Corpus slice topic the question targets (e.g. ons-was-wealth, hmrc-cgt-statistics) or 'refusal' for out-of-corpus probes."
+    },
+    "expected_behaviour": {
+      "type": "string",
+      "enum": ["answer", "refuse"]
+    },
+    "expected_answer": {
+      "type": "string",
+      "description": "The reviewed ground-truth answer. Empty while status is DRAFT."
+    },
+    "required_citations": {
+      "type": "array",
+      "description": "Citations a correct answer must resolve to. Empty while status is DRAFT.",
+      "items": {
+        "type": "object",
+        "required": ["source_id"],
+        "additionalProperties": false,
+        "properties": {
+          "source_id": { "type": "string" },
+          "document_id": { "type": "string" },
+          "section": { "type": "string" }
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["DRAFT", "REVIEWED"]
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "category": { "const": "out_of_corpus" } } },
+      "then": { "properties": { "expected_behaviour": { "const": "refuse" } } }
+    },
+    {
+      "if": { "properties": { "category": { "const": "in_corpus" } } },
+      "then": { "properties": { "expected_behaviour": { "const": "answer" } } }
+    }
+  ]
+}

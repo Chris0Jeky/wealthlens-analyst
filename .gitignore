@@ -1,0 +1,4 @@
+# Fetched corpus documents (reproducible via `make ingest-slice`; never committed)
+data/corpus/
+# Local env
+.env
