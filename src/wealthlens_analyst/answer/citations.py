@@ -227,8 +227,7 @@ def _default_registry_path() -> Path:
         if (parent / "registries" / "sources.yml").is_file():
             return parent / "registries" / "sources.yml"
     raise RuntimeError(
-        "could not locate registries/sources.yml in any ancestor directory; "
-        "set WEALTHLENS_REPO_ROOT to override"
+        "could not locate registries/sources.yml in any ancestor directory; set WEALTHLENS_REPO_ROOT to override"
     )
 
 

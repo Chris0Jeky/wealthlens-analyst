@@ -514,8 +514,7 @@ def _find_repo_root() -> Path:
         if (parent / "registries" / "sources.yml").is_file():
             return parent
     raise RuntimeError(
-        "could not locate repo root (no ancestor holds registries/sources.yml); "
-        "set WEALTHLENS_REPO_ROOT to override"
+        "could not locate repo root (no ancestor holds registries/sources.yml); set WEALTHLENS_REPO_ROOT to override"
     )
 
 

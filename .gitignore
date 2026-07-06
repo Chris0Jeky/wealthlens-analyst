@@ -6,6 +6,7 @@ data/processed/
 # Local env
 .env
 # Python build/tool artifacts
+.venv/
 __pycache__/
 *.pyc
 .mypy_cache/

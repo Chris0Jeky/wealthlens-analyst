@@ -84,7 +84,7 @@ def main() -> int:
             print(f"fetching {source_id} <- {entry['url']}")
             try:
                 _download(str(entry["url"]), target)
-            except Exception as exc:  # noqa: BLE001 - report every fetch failure loudly
+            except Exception as exc:  # report every fetch failure loudly, keep going
                 failures.append(f"{source_id}: download failed: {exc}")
                 continue
 
