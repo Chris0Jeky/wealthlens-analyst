@@ -1,102 +1,87 @@
-# CLAUDE.md — WealthLens Analyst (Hero #1)
+# CLAUDE.md — WealthLens Analyst
 
-Product memory and agent contract for this repo. Extracted from the
-`wealthlens-hq` monorepo on 2026-07-06 (the import commit records the source
-sha); the plan, backlog, and ADRs travelled with it.
+Citation-first RAG service over a **frozen 8-source slice** of official UK wealth statistics
+(ONS WAS, HMRC distributional, IFS/RF reports). `POST /ask` runs Postgres FTS ∥ pgvector dense
+→ RRF fusion (k=60) → abstention gate → cited generation → citation resolution, and serves an
+answer **only if every citation resolves**; otherwise an honest structured refusal. Every
+request writes one `query_log` accounting row (tokens, cost, latency, decision).
+Python 3.11 · FastAPI · SQLAlchemy Core · Alembic · pytest · ruff + **strict mypy**.
 
-## Mission
+Global laws (review, merge, tiers, worktrees) live in `~/.claude/CLAUDE.md` and are injected
+automatically — not restated here. Authority: `.agent-harness/tier.json` (**T2**, push free,
+merge free). Human-blocked items: `HUMAN_TODO.md`.
 
-Evidence-backed research analyst over official UK wealth statistics.
-Citation-first retrieval, honest abstention, a committed eval harness, visible
-latency/cost numbers, a hard spend cap.
-Positioning: "Every number cited, every refusal calibrated, every query costed."
-(Supporting line: "I make LLM systems cheap, reliable, and provably valuable
-in production.")
+## Run it
 
-## The plan is FINAL
+```bash
+make db-up                      # pgvector/pgvector:pg17 on localhost:15432 (docker-compose.yml)
+make install                    # pip install -e ".[dev,evals]"
+cp .env.example .env            # then export: set -a; . ./.env; set +a  (config.py reads the
+                                # PROCESS env — there is NO dotenv auto-load)
+alembic upgrade head            # hand-written revisions in migrations/versions/
+make ingest-slice               # chunk → provenance gate → write; embeds iff OPENAI_API_KEY set
+make dev                        # uvicorn --factory ... 127.0.0.1:8100
+```
 
-`docs/plan/HERO1_PLAN.md` (milestones M0-M6) and `tasks/hero1-backlog.md`
-(ordered half-day tasks) are locked. Do not re-plan, re-architect, or re-sequence.
-Anything genuinely open lives in ADR 0003 and is **Chris's decision, not
-yours** (exception: on 2026-06-11 Chris explicitly delegated D1/D2/D4, now
-recorded in the ADR's decision record; D3 hosting remains his).
+No DB and no API key are needed for the test suite or CI — every test stubs the engine and the
+LLM seam. Windows: `make` and `docker` are on PATH here; if `make` is missing, run the
+underlying `python -m ...` lines from the Makefile directly.
 
-## Locked decisions (compressed — full text in docs/adr/)
+## Proving checks — pick the narrowest that exercises your change
 
-- **Corpus slice, FROZEN until v1 ships:** ONS Wealth and Assets Survey, HMRC
-  distributional statistics, 3-5 IFS/Resolution Foundation reports. Corpus
-  identity lives in `registries/sources.yml` (the trimmed frozen-corpus copy
-  carried in the extraction; 8 entries) and `data/corpus_manifest.yml`.
-  **Adding any other source before the live URL exists is forbidden.**
-- **Retrieval:** Postgres FTS + pgvector, fused with RRF (k=60); reranker
-  behind `RERANK_ENABLED`, default OFF. (ADR 0001)
-- **Citations:** chunk-level; provenance columns (source_id, document_id,
-  section, page, span) captured at ingestion, never reconstructed.
-- **Abstention:** confidence gate returning a structured "cannot answer from
-  this corpus" refusal. Refusal is a product feature, not an error path.
-- **Evals:** 50-100 HUMAN-reviewed golden Q/A pairs + RAGAS + deterministic
-  checks (citation resolvability, schema validity, correct refusal,
-  latency/cost bounds). **Never fabricate golden answers — Chris writes them.**
-- **Observability:** structured JSONL request/eval logging + the public
-  metrics page (p50/p95 latency, cost/query) for v1; the full tracing stack
-  arrives with the gateway that fronts this service later.
-- **Cost:** hard spend cap in-app (budgets table + middleware → 429/refusal),
-  fail-closed. Every model call goes through `src/wealthlens_analyst/llm/client.py`
-  — **no other module may import a provider SDK**. (ADR 0002)
-- **Stack:** Python 3.11+, FastAPI, Postgres+pgvector, Alembic, pytest;
-  ruff + strict mypy for this package (config in `pyproject.toml`).
-- **Shipped means:** live URL + committed eval report + writeup #1 published +
-  demo sent to 10 named people. Nothing else counts as done.
+All timings measured 2026-07-27 in a clean worktree (`python -m pytest`, repo `.venv`).
 
-## Build order
+| Change touches | Command | Measured |
+|---|---|---|
+| `retrieval/` | `pytest tests/test_fts.py tests/test_dense.py tests/test_fuse_rrf.py -q` | 24 passed, 0.2s |
+| `answer/` | `pytest tests/test_abstain.py tests/test_citations.py tests/test_compose.py -q` | 50 passed, 0.3s |
+| `api/` | `pytest tests/test_api.py tests/test_schemas.py -q` | 48 passed, 0.8s |
+| `llm/client.py` | `pytest tests/test_llm_client.py -q` | 16 passed, 0.03s |
+| `budget/` | `pytest tests/test_budget_models.py -q` | 12 passed, 0.2s |
+| `ingest/`, `scripts/` | `pytest tests/test_ingest_write.py tests/test_slice_corpus.py -q` | 44 passed, 0.3s |
+| `evals/golden/`, `evals/checks/` | `python evals/checks/deterministic.py` | `20 records (0 reviewed, 20 draft, 5 refusal probes) · OK` |
+| new/moved module, stub filled | `pytest tests/test_imports.py tests/test_golden_draft_guard.py -q` | 6 passed, 0.6s |
+| `migrations/` | **no unit coverage** — needs a live DB: `make db-up && alembic upgrade head` | not run here |
+| anything non-trivial | `make lint && make test && python evals/checks/deterministic.py` | 200 passed; ruff+format clean; mypy 24 files, no issues |
 
-M0 kickoff → M1 ingest (slice → chunks with provenance, FTS, embeddings) →
-M2 hybrid retrieval behind /ask (debug mode) → M3 reranker + citations →
-M4 abstention → M5 RAGAS + spend cap + metrics page → M6 live URL,
-README failure modes, writeup #1, demo sends. Acceptance criteria per
-milestone: `docs/plan/HERO1_PLAN.md`. Status at extraction: M0-M4 done.
+That last row **is** CI (`.github/workflows/ci.yml`, one job by design), and all of it runs in
+well under a minute locally. RAGAS is deliberately not in CI — it spends real money.
 
 ## Repo map
 
 ```
 src/wealthlens_analyst/
-  config.py   settings from env (DATABASE_URL, model ids, spend cap)
-  db.py       SQLAlchemy engine factory + chunks Core table (H1-09 write path)
-  retrieval/  fts.py dense.py fuse_rrf.py rerank.py   # ADR 0001
-  answer/     compose.py citations.py abstain.py
-  llm/        client.py                               # THE seam (ADR 0002)
-  budget/     models.py middleware.py                 # hard cap (ADR 0002)
-  api/        app.py routes.py schemas.py             # /ask /healthz /metrics/data
-  ingest/     slice_corpus.py fetch_documents.py
-migrations/   Alembic (hand-written revisions in versions/)
-evals/        golden/ checks/ run_ragas.py reports/
-registries/   sources.yml (frozen-corpus registry, trimmed copy)
-data/         corpus_manifest.yml (committed) · raw/ processed/ corpus/ (gitignored)
-scripts/      fetch_corpus.py
-docs/plan/    HERO1_PLAN.md WRITEUPS.md · docs/adr/ 0001-0003
-tasks/        hero1-backlog.md hero1-corpus-candidates.md
-tests/
+  config.py    env → frozen Settings; malformed BUDGET_MONTHLY_CAP_GBP fails LOUDLY at startup
+  db.py        engine factory + chunks Core table
+  retrieval/   fts.py dense.py fuse_rrf.py rerank.py(H1-16 stub)      ADR 0001
+  answer/      compose.py citations.py abstain.py
+  llm/client.py  THE provider seam — the only module that may import an SDK   ADR 0002
+  budget/      models.py middleware.py (H1-27 stub)                    ADR 0002
+  api/         app.py routes.py schemas.py  → /ask /healthz /metrics/data(H1-29 stub)
+  ingest/      slice_corpus.py fetch_documents.py
+migrations/ evals/{golden,checks,run_ragas.py} registries/sources.yml data/corpus_manifest.yml
+docs/plan/HERO1_PLAN.md · docs/adr/0001-0003 · tasks/hero1-backlog.md · tests/
 ```
 
-## Key commands (Makefile)
+Status: **M0–M4 done, M5 in progress.** Stubs raising `NotImplementedError` are pinned by
+`tests/test_imports.py` — gutting one to `return []` will not pass.
 
-`make db-up` (Postgres+pgvector on :15432) · `make dev` (uvicorn :8100) ·
-`make ingest-slice` · `make test` · `make lint` · `make eval-golden-validate` ·
-`make eval-deterministic` · `make eval-ragas` · `make eval-report`
+## Pitfalls specific to this repo
 
-## Engineering cap
-
-No new test infrastructure beyond what the evals need. No speculative
-abstractions. One CI job (`.github/workflows/ci.yml`). Shipping beats polish.
-
-## NEVER DO
-
-- Re-plan, re-architect, or propose alternative frameworks/corpora/sequencing.
-- Add a corpus source before the live URL exists.
-- Fabricate golden answers, statistics, citations, or ground truth of any kind.
-- Add test infrastructure beyond what the evals need.
-- Call a provider SDK outside `llm/client.py`.
-- Commit secrets (keys go in `.env`, documented in `.env.example` only).
-- Add personal or planning material that belongs in the maintainer's private
-  repos — this repo is the product only (code, plan, ADRs, evals).
-- Skip the spend-cap path for "internal" calls — every model call is metered.
+- **The plan is FINAL.** `docs/plan/HERO1_PLAN.md` (M0–M6) and `tasks/hero1-backlog.md` are
+  locked. Do not re-plan, re-architect, or re-sequence. Open questions are ADR decisions and
+  Chris's, not yours.
+- **Never fabricate ground truth** — golden answers, statistics, citations. All 20 golden
+  records are DRAFT and must stay answer-empty; `tests/test_golden_draft_guard.py` enforces it.
+- **Never import a provider SDK outside `llm/client.py`.** Nothing enforces this automatically
+  — check with `grep -rn "import openai\|import anthropic\|import cohere" src/` before pushing.
+- **Never add a corpus source** before its live URL exists; corpus identity lives in
+  `registries/sources.yml` + `data/corpus_manifest.yml` and is frozen until v1 ships.
+- **Never skip the metering path** — every model call is accounted; a served outcome whose
+  `query_log` row cannot be written must 500, not serve unmetered spend.
+- Embedding dimension **1536 is baked into migration `0002_embeddings`**; pointing
+  `EMBEDDING_MODEL` at a different width needs a new revision, not an env edit.
+- Migrations are hand-written; `target_metadata = None`, so `--autogenerate` produces nothing.
+- Secrets: real values live in the gitignored `.env` only; `.env.example` documents the names.
+  This remote is **public** — never commit a key, never move private/planning material here.
+- No new test infrastructure beyond what the evals need. One CI job. Shipping beats polish.
