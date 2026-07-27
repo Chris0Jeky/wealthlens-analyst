@@ -22,22 +22,33 @@ subjective confirmation.
       Decide whether to require the CI check before merge. Squash-merge is already
       disabled repo-side, which matches estate policy.
 
-## Product blockers (from `tasks/hero1-backlog.md` — these gate M5/M6)
+## Product blockers (from `tasks/hero1-backlog.md`)
 
 - [ ] **H1-02 / H1-24 — golden answers.** 20 golden records exist, **0 reviewed, 20 DRAFT**
       (measured: `python evals/checks/deterministic.py`). Agents must never write these:
       a test (`tests/test_golden_draft_guard.py`) fails if a DRAFT record carries an answer.
       RAGAS (H1-25), the eval report (H1-26) and the abstention-gate calibration (H1-22's
-      calibration note) are all blocked on ≥50 reviewed pairs.
-- [ ] **`COHERE_API_KEY`** — H1-16's reranker stays unbuilt (flag OFF, `NotImplementedError`)
-      until you supply a key; flag-on cannot be honestly verified without it.
-- [ ] **H1-30 hosting** — provision the Hetzner CAX21 decided in ADR 0003 D3, deploy, run
-      Alembic + ingest. `/healthz` green on the public URL is the gate.
+      calibration note) are all blocked on ≥50 reviewed pairs. **Gates M5.**
+- [ ] **H1-30 — the Hetzner account.** Your part is creating the account and paying for the
+      CAX21 decided in ADR 0003 D3, then handing over access. The provisioning itself
+      (Docker Compose, Caddy TLS, nightly `pg_dump` cron, Alembic + ingest) is agent work
+      once the box exists — ADR 0003 says so explicitly. `/healthz` green on the public URL
+      is the gate. **Gates M6.**
 - [ ] **H1-32 demo sends** — the 10 named recipients and the send log are maintained
-      privately by you; agents must not contact anyone.
-- [ ] **ADR 0003 D3 follow-on: Langfuse placement/sizing** on the chosen box (H1-28).
+      privately by you; agents must not contact anyone. **Gates M6.**
+
+### Optional — nothing waits on these
+
+- [ ] **`COHERE_API_KEY`** — H1-16's reranker stays unbuilt (flag OFF, `NotImplementedError`)
+      until you supply a key; flag-on cannot be honestly verified without it. Decision D-A
+      (2026-07-03) put **H1-16 and H1-17 OFF the critical path to the live URL**, and no M5
+      or M6 task in `tasks/hero1-backlog.md` lists them as a dep — so this blocks nothing.
 
 ## Notes for agents
 
 Nothing here is an excuse to stall. Everything not listed above — code, tests, migrations,
 evals plumbing, docs, dependency PRs — is agent work under the T2 gate.
+
+Already decided, do NOT re-ask: **Langfuse placement and sizing.** ADR 0003 D3 is Accepted
+with "everything on-box incl. self-hosted Langfuse" on a CAX21 (the 8GB box was chosen *for*
+Langfuse). H1-28 is ordinary agent implementation work, not a pending question.
