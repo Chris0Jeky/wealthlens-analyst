@@ -4,7 +4,10 @@ Citation-first RAG service over a **frozen 8-source slice** of official UK wealt
 (ONS WAS, HMRC distributional, IFS/RF reports). `POST /ask` runs Postgres FTS ∥ pgvector dense
 → RRF fusion (k=60) → abstention gate → cited generation → citation resolution, and serves an
 answer **only if every citation resolves**; otherwise an honest structured refusal. Every
-request writes one `query_log` accounting row (tokens, cost, latency, decision).
+request that *reaches the handler* writes one `query_log` accounting row (tokens, cost,
+latency, decision) — a request rejected by FastAPI validation (422: malformed question,
+unknown `debug` value) never reaches it and logs nothing, so `query_log` is not a record of
+all inbound traffic.
 Python 3.11 · FastAPI · SQLAlchemy Core · Alembic · pytest · ruff + **strict mypy**.
 
 Global laws (review, merge, tiers, worktrees) live in `~/.claude/CLAUDE.md` and are injected
@@ -16,12 +19,22 @@ merge free). Human-blocked items: `HUMAN_TODO.md`.
 ```bash
 make db-up                      # pgvector/pgvector:pg17 on localhost:15432 (docker-compose.yml)
 make install                    # pip install -e ".[dev,evals]"
-cp .env.example .env            # then export: set -a; . ./.env; set +a  (config.py reads the
+cp .env.example .env            # then FILL IN or CLEAR OPENAI_API_KEY — the copied placeholder
+                                # (`your-openai-key`) is NON-EMPTY, and ingestion gates
+                                # embedding on truthiness, so leaving it fails on auth instead
+                                # of taking the keyless FTS-only path.
+                                # Then export: set -a; . ./.env; set +a  (config.py reads the
                                 # PROCESS env — there is NO dotenv auto-load)
 alembic upgrade head            # hand-written revisions in migrations/versions/
 make ingest-slice               # chunk → provenance gate → write; embeds iff OPENAI_API_KEY set
 make dev                        # uvicorn --factory ... 127.0.0.1:8100
 ```
+
+**`make ingest-slice` is not yet runnable from a fresh clone.** It reads the tabular CSVs
+from `data/processed/`, which is gitignored and empty on checkout — they are the upstream
+wealthlens-hq dashboard pipeline's outputs. Without them `ingest_slice()` fails loudly with
+`no processed source CSVs found in …`. Generate or copy them in first; making acquisition
+self-contained is H1-34, still open.
 
 No DB and no API key are needed for the test suite or CI — every test stubs the engine and the
 LLM seam. Windows: `make` and `docker` are on PATH here; if `make` is missing, run the
