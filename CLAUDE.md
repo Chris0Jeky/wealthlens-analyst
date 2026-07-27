@@ -79,8 +79,13 @@ migrations/ evals/{golden,checks,run_ragas.py} registries/sources.yml data/corpu
 docs/plan/HERO1_PLAN.md · docs/adr/0001-0003 · tasks/hero1-backlog.md · tests/
 ```
 
-Status: **M0–M4 done, M5 in progress.** Stubs raising `NotImplementedError` are pinned by
-`tests/test_imports.py` — gutting one to `return []` will not pass.
+Status: **M0–M4 done, M5 in progress.** `tests/test_imports.py` behaviourally pins exactly
+**two** stubs — `retrieval.rerank.rerank` (H1-16) and `budget.models.current_spend_gbp`
+(H1-27); gutting either to a silent return fails the suite. The other pending stubs —
+`ingest.fetch_documents.fetch_slice_documents` (H1-06), `budget.middleware.budget_guard`
+(H1-27) and `api.routes.metrics_data` (H1-29) — are **import-smoke only**: measured
+2026-07-27, replacing the first two with `return []` / `return None` still left all 200 tests
+green. Pin the stub you are about to fill before you fill it.
 
 ## Pitfalls specific to this repo
 
@@ -89,8 +94,12 @@ Status: **M0–M4 done, M5 in progress.** Stubs raising `NotImplementedError` ar
   Chris's, not yours.
 - **Never fabricate ground truth** — golden answers, statistics, citations. All 20 golden
   records are DRAFT and must stay answer-empty; `tests/test_golden_draft_guard.py` enforces it.
-- **Never import a provider SDK outside `llm/client.py`.** Nothing enforces this automatically
-  — check with `grep -rn "import openai\|import anthropic\|import cohere" src/` before pushing.
+- **Never import a provider SDK outside `llm/client.py`.** Nothing enforces this automatically.
+  Before pushing: `grep -rnE '^\s*(import|from)\s+(openai|anthropic|cohere)' src/` — it matches
+  BOTH `import openai` and `from openai import OpenAI` (the plain-substring form misses the
+  latter) and today hits only `llm/client.py:146,192`, whose `import openai` is lazy inside the
+  methods. It is still a **denylist of three vendor names**: a fourth provider's SDK passes it
+  silently, so reading the diff, not the grep, is what actually holds the metering seam.
 - **Never add a corpus source** before its live URL exists; corpus identity lives in
   `registries/sources.yml` + `data/corpus_manifest.yml` and is frozen until v1 ships.
 - **Never skip the metering path** — every model call is accounted; a served outcome whose
