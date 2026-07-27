@@ -50,9 +50,12 @@ All timings measured 2026-07-27 in a clean worktree (`python -m pytest`, repo `.
 | `answer/` | `pytest tests/test_abstain.py tests/test_citations.py tests/test_compose.py -q` | 50 passed, 0.3s |
 | `api/` | `pytest tests/test_api.py tests/test_schemas.py -q` | 48 passed, 0.8s |
 | `llm/client.py` | `pytest tests/test_llm_client.py -q` | 16 passed, 0.03s |
-| `budget/` | `pytest tests/test_budget_models.py -q` | 12 passed, 0.2s |
-| `ingest/`, `scripts/` | `pytest tests/test_ingest_write.py tests/test_slice_corpus.py -q` | 44 passed, 0.3s |
-| `evals/golden/`, `evals/checks/` | `python evals/checks/deterministic.py` | `20 records (0 reviewed, 20 draft, 5 refusal probes) · OK` |
+| `budget/models.py` | `pytest tests/test_budget_models.py -q` | 12 passed, 0.2s |
+| `budget/middleware.py` | **NOT covered** — nothing imports it but `tests/test_imports.py`, and that only imports the module; `budget_guard` is never called. Write the test with H1-27 | n/a |
+| `ingest/` | `pytest tests/test_ingest_write.py tests/test_slice_corpus.py -q` | 44 passed, 0.3s |
+| `scripts/fetch_corpus.py` | **NOT covered** — no test imports or runs it. Nearest real check needs network + a populated `data/raw/`: `python scripts/fetch_corpus.py --verify` | not run here |
+| `evals/golden/`, `evals/checks/deterministic.py` | `python evals/checks/deterministic.py` | `20 records (0 reviewed, 20 draft, 5 refusal probes) · OK` |
+| `evals/checks/check_citations_live.py`, `check_compose_live.py` | **not reached by `deterministic.py`** (it imports neither). Each needs analyst-db ingested + a real `OPENAI_API_KEY` and **spends** (~1 embed + 1 generation): `python evals/checks/check_<name>_live.py` | not run here |
 | new/moved module, stub filled | `pytest tests/test_imports.py tests/test_golden_draft_guard.py -q` | 6 passed, 0.6s |
 | `migrations/` | **no unit coverage** — needs a live DB: `make db-up && alembic upgrade head` | not run here |
 | anything non-trivial | `make lint && make test && python evals/checks/deterministic.py` | 200 passed; ruff+format clean; mypy 24 files, no issues |
