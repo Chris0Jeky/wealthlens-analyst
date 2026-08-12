@@ -1,0 +1,17 @@
+{
+  "tier": 2,
+  "name": "daily driver",
+  "authority": { "push": "free", "merge": "free" },
+  "flags": {
+    "sensitive_data": false,
+    "wave_mode": false,
+    "dormant_production": false,
+    "relaxed_work_loss_guards": false
+  },
+  "model_routing": { "harness_and_review": "top", "slices": "mid", "maintenance": "cheap" },
+  "budgets": { "standing_context_tokens": 2000, "session_baseline_tokens": null },
+  "human_todo": "HUMAN_TODO.md",
+  "runtimes": ["claude"],
+  "last_reviewed": "2026-07-27",
+  "notes": "T2 daily driver: a real CI-backed Python service (FastAPI + Postgres/pgvector, 200 tests, ruff+strict-mypy+deterministic-eval gate in .github/workflows/ci.yml) with no deploy, no users, and no money moving yet — production signals arrive at H1-30 (live URL), which is when this tier should be re-reviewed for T3. Authority is merge:free per owner directive agent-harness#91: agents merge once the tier gate passes (CI green at the head + law 2's review and aging gate). sensitive_data is deliberately FALSE. The ESTATE row recommends the overlay because of the gitignored root .env, but the floor's sensitive_data overlay denies pushes to public remotes and this remote is PUBLIC by owner decision (2026-07-26) — setting the flag would make the repo unpushable by agents while protecting nothing the .gitignore does not already cover. The residual local-posture concern is recorded as a human decision line in HUMAN_TODO.md; re-open it only if a secret ever enters the tree or history. No repo floor copy is vendored: the Claude deny floor rides the GLOBAL PreToolUse hook via CLAUDE_PROJECT_DIR (EvidenceDeck precedent), so there is no double-spawn and no drift. Single-runtime (no .codex/ -> no AGENTS.md). Measured 2026-07-27: remote public, main has NO branch protection, squash-merge already disabled."
+}
