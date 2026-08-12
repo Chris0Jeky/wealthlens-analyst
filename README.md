@@ -86,7 +86,7 @@ forbidden by the locked plan. ONS and HMRC statistics are used under the
 [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/);
 IFS and Resolution Foundation reports carry their publishers' CC licences
 (BY / BY-NC / BY-NC-ND, per manifest entry) — fetched for analysis, cited
-with provenance, never redistributed here. Code is MIT (`LICENSE`).
+with provenance, never redistributed here. Code is GPL-3.0-only (`LICENSE`); see `RELICENSING.md` for the transition record.
 
 ## Failure modes
 

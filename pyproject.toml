@@ -8,7 +8,7 @@ version = "0.1.0.dev0"
 description = "WealthLens v2 — evidence-backed research analyst over official UK wealth statistics (citation-first RAG with honest abstention)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-only" }
 # Version floors verified against PyPI on 2026-06-11 (see ADR 0003 for the record).
 dependencies = [
     "fastapi>=0.136.3",
