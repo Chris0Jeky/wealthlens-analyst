@@ -10,7 +10,7 @@ unknown `debug` value) never reaches it and logs nothing, so `query_log` is not 
 all inbound traffic.
 Python 3.11 · FastAPI · SQLAlchemy Core · Alembic · pytest · ruff + **strict mypy**.
 
-Global laws (review, merge, tiers, worktrees) live in `~/.claude/CLAUDE.md` and are injected
+Global laws (review, merge, tiers, worktrees) live in `~/.claude/rules/laws.md` and are injected
 automatically — not restated here. Authority: `.agent-harness/tier.json` (**T2**, push free,
 merge free). Human-blocked items: `HUMAN_TODO.md`.
 
