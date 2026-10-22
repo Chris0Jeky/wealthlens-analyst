@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.exc import DatabaseError, OperationalError
 
+import wealthlens_analyst.answer.compose as compose
 import wealthlens_analyst.api.routes as routes
 from wealthlens_analyst.answer.abstain import GateDecision, evaluate_evidence
 from wealthlens_analyst.answer.citations import Citation, ResolvedCitations
@@ -357,25 +358,100 @@ def test_ask_plain_refuses_on_a_partial_prune_rather_than_serve_an_uncited_claim
     assert harness.recorded[0]["gate_signal"] == _DEFAULT_GATE_SIGNAL
 
 
-def test_ask_plain_strips_drift_and_out_of_range_markers_from_a_served_answer(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "[chunk:99999999999999999999]",
+        "[chunk:9223372036854775808]",
+        "[chunk: 99]",
+        "[CHUNK=99]",
+        "[ CHunk : 2 ]",
+        "[chunk:02]",
+        "[chunk:-1]",
+        "[chunk:abc]",
+        "[chunk:99",
+    ],
+)
+def test_ask_plain_refuses_mixed_valid_and_invalid_citations_and_meters_spend(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, marker: str
 ) -> None:
-    # A FULLY-cited answer (nothing pruned) whose body still carries citation-shaped
-    # text the strict parser never counted — a drift form "[chunk: 5]" and a
-    # >BIGINT id compose dropped from cited_chunk_ids — must be scrubbed so only the
-    # canonical served-citation marker [chunk:2] remains.
-    text = "Real [chunk:2], drift [chunk: 5], huge [chunk:99999999999999999999999]."
-    monkeypatch.setattr(routes, "compose_answer", lambda q, ev: _composed(text, [2]))
+    result = CompletionResult(
+        text=f"ONS says A [chunk:2]. The top percentile owns 99% {marker}",
+        model="fake-model",
+        tokens_in=_GEN_TOKENS_IN,
+        tokens_out=_GEN_TOKENS_OUT,
+        cost_gbp=_GEN_COST_GBP,
+        finish_reason="stop",
+    )
+
+    class Client:
+        def complete(self, **kwargs: Any) -> CompletionResult:
+            return result
+
+    monkeypatch.setattr(compose, "get_client", Client)
+
+    def resolve(answer: ComposedAnswer, **kwargs: Any) -> ResolvedCitations:
+        assert answer.cited_chunk_ids == [2]
+        assert answer.fabricated_chunk_ids == []
+        return ResolvedCitations(citations=[_citation(2)])
+
+    monkeypatch.setattr(routes, "resolve_citations", resolve)
+    response = harness.client.post("/ask", json={"question": "q"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mode"] == "refusal"
+    assert body["reason"] == routes._UNSUPPORTED_REASON
+    assert "answer" not in body
+    assert len(harness.recorded) == 1
+    row = harness.recorded[0]
+    assert row["decision"] == QueryDecision.REFUSED
+    assert row["tokens_in"] == _EMBED_TOKENS + _GEN_TOKENS_IN
+    assert row["tokens_out"] == _GEN_TOKENS_OUT
+    assert row["cost_gbp"] == pytest.approx(_EMBED_COST_GBP + _GEN_COST_GBP)
+
+
+@pytest.mark.parametrize(
+    "finish_reason", ["stop", "length", "content_filter", "tool_calls", "function_call", "unknown", "", None]
+)
+def test_ask_plain_requires_normal_completion_and_meters_spend(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, finish_reason: str | None
+) -> None:
+    text = "ONS says A [chunk:2]. More evidence [chunk:1]."
+    result = CompletionResult(
+        text=text,
+        model="fake-model",
+        tokens_in=_GEN_TOKENS_IN,
+        tokens_out=_GEN_TOKENS_OUT,
+        cost_gbp=_GEN_COST_GBP,
+        finish_reason=finish_reason,  # type: ignore[arg-type]
+    )
+
+    class Client:
+        def complete(self, **kwargs: Any) -> CompletionResult:
+            return result
+
+    monkeypatch.setattr(compose, "get_client", Client)
     monkeypatch.setattr(
         routes,
         "resolve_citations",
-        lambda answer, **kw: ResolvedCitations(citations=[_citation(2)], unresolved_chunk_ids=[]),
+        lambda answer, **kw: ResolvedCitations(citations=[_citation(2), _citation(1)]),
     )
     response = harness.client.post("/ask", json={"question": "q"})
-    body = response.json()
-    assert body["mode"] == "answer"
-    assert body["answer"] == "Real [chunk:2], drift, huge."
-    assert [c["chunk_id"] for c in body["citations"]] == [2]
+    if finish_reason == "stop":
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "answer"
+        assert body["answer"] == text
+        assert [c["chunk_id"] for c in body["citations"]] == [2, 1]
+    else:
+        assert response.status_code == 500
+        assert response.json() == {"detail": "answer generation failed"}
+    assert len(harness.recorded) == 1
+    row = harness.recorded[0]
+    assert row["decision"] == (QueryDecision.ANSWERED if finish_reason == "stop" else QueryDecision.ERROR)
+    assert row["tokens_in"] == _EMBED_TOKENS + _GEN_TOKENS_IN
+    assert row["tokens_out"] == _GEN_TOKENS_OUT
+    assert row["cost_gbp"] == pytest.approx(_EMBED_COST_GBP + _GEN_COST_GBP)
 
 
 def test_ask_plain_refuses_when_no_citation_resolves(harness: _Harness, monkeypatch: pytest.MonkeyPatch) -> None:

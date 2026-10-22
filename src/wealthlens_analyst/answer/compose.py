@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 #: Inline citation marker the prompt mandates and the parser extracts. One
 #: format, defined once — citations.py (H1-19) resolves the same ids.
-_CITATION_RE = re.compile(r"\[chunk:(\d+)\]")
+_CITATION_RE = re.compile(r"\[chunk:([1-9][0-9]*)\]")
 
 #: Strip form of the marker used by the serving policy (H1-20). Deliberately
 #: LENIENT — it mirrors _CITATION_NEAR_RE above (drift forms like "[chunk: 99]",
@@ -32,11 +32,8 @@ _CITATION_RE = re.compile(r"\[chunk:(\d+)\]")
 #: immediately-preceding whitespace run so removing " [chunk:99]" leaves no gap.
 _CITATION_STRIP_RE = re.compile(r"\s*\[\s*chunk\s*[:=]?\s*(\d+)\s*\]", re.IGNORECASE)
 
-#: Lenient near-miss detector, for LOGGING only: catches citation-shaped
-#: output the strict parser would silently drop ("[chunk: 9140]", "[CHUNK=9140]").
-#: A model drifting from the mandated format must be visible, not silently
-#: uncited — the asymmetric twin of the fabricated-id warning below.
-_CITATION_NEAR_RE = re.compile(r"\[\s*chunk\s*[:=]?\s*\d+\s*\]", re.IGNORECASE)
+# Detect malformed markers too, so their claims cannot survive citation pruning.
+_CITATION_NEAR_RE = re.compile(r"\[\s*chunk[^\]]*(?:\]|$)", re.IGNORECASE)
 
 #: chunk_id is BIGINT in the database (migration 0001); a hallucinated id
 #: beyond this cannot exist and would crash a downstream parameter bind.
@@ -91,6 +88,8 @@ class ComposedAnswer:
     #: (they are also inside cited_chunk_ids, which records what the answer
     #: CLAIMS; and they are warn-logged at parse time).
     fabricated_chunk_ids: list[int] = field(default_factory=list)
+    #: First invalid token, capped at 128 characters; never sent to the SQL resolver.
+    invalid_citation_marker: str = ""
 
 
 def _format_evidence(evidence: list[ChunkHit]) -> str:
@@ -109,36 +108,20 @@ def _format_evidence(evidence: list[ChunkHit]) -> str:
     return "\n\n".join(blocks)
 
 
-def _parse_citations(text: str, evidence_ids: set[int]) -> tuple[list[int], list[int]]:
-    """Extract cited chunk ids in first-appearance order, deduplicated.
-
-    Returns (cited, fabricated): everything the answer CLAIMS, plus the
-    subset not in the supplied evidence (resolution/stripping is
-    citations.py's job, H1-19) — fabrications are logged loudly here too,
-    because a fabricated citation is exactly the failure mode this product
-    exists to make visible. The parser is strict about the mandated format,
-    so format DRIFT is also logged (a near-miss like "[chunk: 9140]" must
-    not silently become an uncited claim), as is an answer that parses to
-    zero citations while near-miss markers exist.
-    """
+def _parse_citations(text: str, evidence_ids: set[int]) -> tuple[list[int], list[int], str]:
+    """Return deduplicated cited ids, fabricated ids and a bounded invalid-token signal."""
     cited: list[int] = []
-    for match in _CITATION_RE.finditer(text):
-        chunk_id = int(match.group(1))
-        if chunk_id > _MAX_CHUNK_ID:
-            # A hallucinated id beyond BIGINT can never be a real chunk, and
-            # binding it downstream (H1-19's DB resolution) would crash the
-            # driver — drop it here, loudly.
-            logger.warning("compose: dropping impossible cited chunk id %d (exceeds BIGINT)", chunk_id)
+    invalid = ""
+    for token in _CITATION_NEAR_RE.finditer(text):
+        match = _CITATION_RE.fullmatch(token.group())
+        if match is None or len(match.group(1)) > 19 or int(match.group(1)) > _MAX_CHUNK_ID:
+            if not invalid:
+                invalid = token.group()[:128]
+                logger.warning("compose: invalid citation marker (format drift or exceeds BIGINT): %r", invalid)
             continue
+        chunk_id = int(match.group(1))
         if chunk_id not in cited:
             cited.append(chunk_id)
-    near_misses = len(_CITATION_NEAR_RE.findall(text)) - len(_CITATION_RE.findall(text))
-    if near_misses > 0:
-        logger.warning(
-            "compose: %d citation-shaped marker(s) did not match the strict [chunk:<id>] format "
-            "and were not parsed (model format drift)",
-            near_misses,
-        )
     if not cited:
         # Legitimate for the mandated in-prompt refusal sentence (which cites
         # nothing by design), but for any factual answer this is the pipeline's
@@ -148,7 +131,7 @@ def _parse_citations(text: str, evidence_ids: set[int]) -> tuple[list[int], list
     fabricated = [cid for cid in cited if cid not in evidence_ids]
     if fabricated:
         logger.warning("compose: answer cites chunk ids not in the supplied evidence: %s", fabricated)
-    return cited, fabricated
+    return cited, fabricated, invalid
 
 
 def strip_unresolved_citation_markers(text: str, resolved_ids: set[int]) -> str:
@@ -218,17 +201,14 @@ def compose_answer(question: str, evidence: list[ChunkHit]) -> ComposedAnswer:
         raise EmptyGenerationError(
             f"generation returned empty text ({result.model}, tokens_out={result.tokens_out})", result
         )
-    if result.finish_reason == "length":
-        # The answer was CUT OFF at the output cap (which includes reasoning
-        # tokens). A truncated answer risks a mangled figure — worse than no
-        # answer for a statistics product — so it must never be served as
-        # complete (the figure-fidelity rule is a hard constraint).
+    if result.finish_reason != "stop":
+        # Only a confirmed normal completion can safely carry complete figures.
         raise EmptyGenerationError(
-            f"generation was truncated at the output cap ({result.model}, tokens_out={result.tokens_out}); "
-            "refusing to serve a possibly cut-off figure",
+            f"generation was incomplete or truncated (finish_reason={result.finish_reason!r}, "
+            f"{result.model}, tokens_out={result.tokens_out})",
             result,
         )
-    cited, fabricated = _parse_citations(result.text, {hit.chunk_id for hit in evidence})
+    cited, fabricated, invalid = _parse_citations(result.text, {hit.chunk_id for hit in evidence})
     return ComposedAnswer(
         text=result.text,
         cited_chunk_ids=cited,
@@ -237,4 +217,5 @@ def compose_answer(question: str, evidence: list[ChunkHit]) -> ComposedAnswer:
         cost_gbp=result.cost_gbp,
         model=result.model,
         fabricated_chunk_ids=fabricated,
+        invalid_citation_marker=invalid,
     )
