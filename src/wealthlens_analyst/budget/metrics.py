@@ -26,6 +26,7 @@ from time import monotonic
 from weakref import WeakKeyDictionary
 
 import sqlalchemy as sa
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy import Connection, Engine
 
 from wealthlens_analyst.budget.models import QueryDecision
@@ -103,6 +104,7 @@ class _CacheEntry:
 _cache: WeakKeyDictionary[Engine, _CacheEntry] = WeakKeyDictionary()
 _cache_lock = Lock()
 _CACHE_TTL_SECONDS = 30
+_LOCK_WAIT_SECONDS = 2.5
 
 
 def _read_metrics(conn: Connection, start: datetime, end: datetime) -> QueryMetrics:
@@ -187,7 +189,11 @@ def read_monthly_metrics(engine: Engine, *, now: datetime | None = None) -> tupl
     now = now if now is not None else datetime.now(UTC)
     start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
-    with _cache_lock:
+    # Bounded wait: with a slow or hung database, queued public requests give up
+    # (503 via SATimeoutError) instead of piling up threads that /ask also needs.
+    if not _cache_lock.acquire(timeout=_LOCK_WAIT_SECONDS):
+        raise SATimeoutError("metrics refresh already in progress")
+    try:
         cached = _cache.get(engine)
         if cached is not None and cached.start == start and monotonic() < cached.expires_at:
             return start, end, cached.summary
@@ -196,4 +202,6 @@ def read_monthly_metrics(engine: Engine, *, now: datetime | None = None) -> tupl
                 conn.execute(sa.text("SET LOCAL statement_timeout = '2s'"))
             summary = _read_metrics(conn, start, end)
         _cache[engine] = _CacheEntry(start, summary, monotonic() + _CACHE_TTL_SECONDS)
+    finally:
+        _cache_lock.release()
     return start, end, summary

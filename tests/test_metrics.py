@@ -404,3 +404,17 @@ def test_cache_does_not_reuse_another_engines_result(engine: Engine) -> None:
         assert read_monthly_metrics(other, now=_NOW)[2].total_queries == 0
     finally:
         other.dispose()
+
+
+def test_busy_refresh_returns_503_instead_of_queueing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A refresh stuck on the database makes other callers give up quickly (503), not queue."""
+
+    from wealthlens_analyst.budget import metrics
+
+    monkeypatch.setattr(metrics, "_LOCK_WAIT_SECONDS", 0.05)
+    metrics._cache_lock.acquire()
+    try:
+        with pytest.raises(metrics.SATimeoutError):
+            metrics.read_monthly_metrics(object())  # type: ignore[arg-type]
+    finally:
+        metrics._cache_lock.release()
