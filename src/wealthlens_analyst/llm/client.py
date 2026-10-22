@@ -49,6 +49,14 @@ class EmbeddingResult:
     cost_gbp: float
 
 
+class EmbeddingValidationError(ValueError):
+    """A billed embedding response was rejected; result carries spend with no vectors."""
+
+    def __init__(self, message: str, result: EmbeddingResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 # --- Pricing -----------------------------------------------------------------
 # OpenAI list prices in USD per 1M tokens (verified 2026-06: text-embedding-3-small
 # is $0.02/1M, -3-large $0.13/1M). Cost is reported in GBP because the hard spend
@@ -195,23 +203,34 @@ class OpenAIClient:
 
         client = openai.OpenAI(api_key=self._api_key)
         response = client.embeddings.create(model=self._embedding_model, input=texts)
+        tokens_in = response.usage.prompt_tokens
+        accounting = EmbeddingResult(
+            vectors=[],
+            model=self._embedding_model,
+            tokens_in=tokens_in,
+            cost_gbp=embedding_cost_gbp(self._embedding_model, tokens_in),
+        )
         indices = [item.index for item in response.data]
         if any(type(index) is not int for index in indices) or sorted(indices) != list(range(len(texts))):
-            raise ValueError(f"OpenAI embedding response indices must be a permutation of range({len(texts)})")
+            raise EmbeddingValidationError(
+                f"OpenAI embedding response indices must be a permutation of range({len(texts)})", accounting
+            )
         for item in response.data:
             if len(item.embedding) != EMBEDDING_DIM:
-                raise ValueError(
-                    f"OpenAI embedding at index {item.index} has {len(item.embedding)} dims, expected {EMBEDDING_DIM}"
+                raise EmbeddingValidationError(
+                    f"OpenAI embedding at index {item.index} has {len(item.embedding)} dims, expected {EMBEDDING_DIM}",
+                    accounting,
                 )
             if any(type(value) not in (int, float) or not isfinite(value) for value in item.embedding):
-                raise ValueError(f"OpenAI embedding at index {item.index} must contain only finite numbers")
+                raise EmbeddingValidationError(
+                    f"OpenAI embedding at index {item.index} must contain only finite numbers", accounting
+                )
         vectors = [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
-        tokens_in = response.usage.prompt_tokens
         return EmbeddingResult(
             vectors=vectors,
             model=self._embedding_model,
             tokens_in=tokens_in,
-            cost_gbp=embedding_cost_gbp(self._embedding_model, tokens_in),
+            cost_gbp=accounting.cost_gbp,
         )
 
 
