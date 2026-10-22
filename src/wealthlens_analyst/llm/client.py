@@ -17,9 +17,11 @@ configuration (EMBEDDING_MODEL / ANALYST_MODEL), never hard-coded. Embeddings
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import Protocol
 
 from wealthlens_analyst.config import load_settings
+from wealthlens_analyst.db import EMBEDDING_DIM
 
 
 @dataclass(frozen=True)
@@ -186,13 +188,23 @@ class OpenAIClient:
     def embed(self, texts: list[str]) -> EmbeddingResult:
         """Embed ``texts`` with the configured embedding model (one batched call).
 
-        Vectors are sorted back into input order by the API's per-item ``index``, so
-        the result is row-aligned with ``texts`` regardless of response ordering.
+        Validate indices and finite vector dimensions before returning any results.
+        Vectors are sorted into input order; malformed responses raise ValueError.
         """
         import openai
 
         client = openai.OpenAI(api_key=self._api_key)
         response = client.embeddings.create(model=self._embedding_model, input=texts)
+        indices = [item.index for item in response.data]
+        if any(type(index) is not int for index in indices) or sorted(indices) != list(range(len(texts))):
+            raise ValueError(f"OpenAI embedding response indices must be a permutation of range({len(texts)})")
+        for item in response.data:
+            if len(item.embedding) != EMBEDDING_DIM:
+                raise ValueError(
+                    f"OpenAI embedding at index {item.index} has {len(item.embedding)} dims, expected {EMBEDDING_DIM}"
+                )
+            if any(type(value) not in (int, float) or not isfinite(value) for value in item.embedding):
+                raise ValueError(f"OpenAI embedding at index {item.index} must contain only finite numbers")
         vectors = [item.embedding for item in sorted(response.data, key=lambda d: d.index)]
         tokens_in = response.usage.prompt_tokens
         return EmbeddingResult(
