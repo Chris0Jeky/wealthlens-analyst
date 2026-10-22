@@ -49,7 +49,8 @@ from wealthlens_analyst.answer.compose import (
     EmptyGenerationError,
     compose_answer,
 )
-from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, RefusalResponse
+from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, OverBudgetResponse, RefusalResponse
+from wealthlens_analyst.budget.middleware import budget_guard
 from wealthlens_analyst.budget.models import QueryDecision, record_query
 from wealthlens_analyst.llm.client import EmbeddingResult, EmbeddingValidationError, get_client
 from wealthlens_analyst.retrieval.dense import search_dense_by_vector
@@ -470,7 +471,7 @@ def _ask_plain(
     )
 
 
-@router.post("/ask")
+@router.post("/ask", responses={429: {"model": OverBudgetResponse}})
 def ask(
     request: AskRequest,
     engine: Annotated[Engine, Depends(get_engine)],
@@ -488,10 +489,11 @@ def ask(
 
     An unknown debug value is a 422 (the Literal), not a silent plain-mode
     fallthrough. The abstention gate (H1-21/H1-22) refuses weak evidence ahead of
-    generation; the budget guard (H1-27) will add the over_budget (429) variant
+    generation; the budget guard (H1-27) returns the over_budget (429) variant
     ahead of retrieval.
     """
     started = time.perf_counter()
+    budget_guard(engine, request.question)
     if debug == "retrieval":
         return _ask_debug_retrieval(request.question, engine, started)
     return _ask_plain(request.question, engine, registry, started)

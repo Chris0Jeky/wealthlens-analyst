@@ -59,10 +59,10 @@ def _parse_budget_cap(raw: str | None) -> float | None:
         return None  # not configured -> fail-closed (middleware blocks spend)
     try:
         cap = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"BUDGET_MONTHLY_CAP_GBP must be numeric, got {raw!r}") from exc
+    except ValueError:
+        raise ValueError("BUDGET_MONTHLY_CAP_GBP must be numeric") from None
     if not math.isfinite(cap) or cap <= 0:
-        raise ValueError(f"BUDGET_MONTHLY_CAP_GBP must be a positive, finite number, got {raw!r}")
+        raise ValueError("BUDGET_MONTHLY_CAP_GBP must be a positive, finite number")
     return cap
 
 

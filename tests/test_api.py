@@ -163,6 +163,9 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setattr(routes, "search_dense_by_vector", fake_dense_by_vector)
     monkeypatch.setattr(routes, "get_client", lambda: _FakeClient(calls))
     monkeypatch.setattr(routes, "record_query", fake_record_query)
+    # These tests isolate retrieval/answer behavior. The real guard and its
+    # route wiring are exercised against seeded accounting in test_budget_guard.
+    monkeypatch.setattr(routes, "budget_guard", lambda engine, question: None)
     # Default: gate answerable (compose-focused tests are decoupled from the
     # gate's uncalibrated thresholds). Gate-focused tests override this.
     monkeypatch.setattr(
