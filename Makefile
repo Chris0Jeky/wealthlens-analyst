@@ -38,9 +38,9 @@ fetch-corpus: ## Download corpus documents per data/corpus_manifest.yml into dat
 eval-golden-validate: ## Validate the golden set against its JSON schema (static, CI-safe)
 	$(PYTHON) evals/checks/deterministic.py
 
-# Static checks today; gains --live (citation resolvability, refusal set,
-# latency/cost bounds against a serving /ask) when backlog task H1-23 lands.
-eval-deterministic: ## Run the deterministic eval checks
+# Offline golden validation + SYNTHETIC recorded-response checks (no model calls).
+# --responses scores real recordings; guarded --live recording remains pending.
+eval-deterministic: ## Run the offline deterministic eval checks
 	$(PYTHON) evals/checks/deterministic.py
 
 eval-ragas: ## Run RAGAS metrics over the reviewed golden subset (pending H1-25)

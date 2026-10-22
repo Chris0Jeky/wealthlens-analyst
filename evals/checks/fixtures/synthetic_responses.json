@@ -1,0 +1,39 @@
+{
+  "format_version": 1,
+  "synthetic": true,
+  "records": [
+    {
+      "question_id": "SYN-ANSWER",
+      "response": {
+        "mode": "answer",
+        "question": "Synthetic supported question?",
+        "answer": "SYNTHETIC response for checker testing only [chunk:101].",
+        "citations": [{
+          "chunk_id": 101,
+          "source_id": "synthetic-source",
+          "source_name": "SYNTHETIC fixture, not corpus evidence",
+          "document_id": "synthetic-document",
+          "section": "Synthetic section",
+          "page": null,
+          "span": null,
+          "url": "https://example.invalid/synthetic",
+          "access_date": "2026-01-01"
+        }]
+      },
+      "latency_ms": 10,
+      "cost_gbp": 0.001
+    },
+    {
+      "question_id": "SYN-REFUSE",
+      "response": {"mode": "refusal", "question": "Synthetic unsupported question?", "reason": "SYNTHETIC refusal."},
+      "latency_ms": 2,
+      "cost_gbp": 0
+    },
+    {
+      "question_id": "SYN-DRAFT",
+      "response": {"mode": "over_budget", "question": "Synthetic unreviewed question?", "reason": "SYNTHETIC budget refusal; draft correctness is skipped."},
+      "latency_ms": 1,
+      "cost_gbp": 0
+    }
+  ]
+}
