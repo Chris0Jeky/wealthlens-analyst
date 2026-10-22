@@ -15,6 +15,7 @@ import pytest
 
 from wealthlens_analyst.llm.client import (
     EmbeddingResult,
+    EmbeddingValidationError,
     OpenAIClient,
     embedding_cost_gbp,
     get_client,
@@ -128,6 +129,31 @@ def test_embed_rejects_non_finite_or_non_numeric_values(monkeypatch: pytest.Monk
 
     with pytest.raises(ValueError, match="finite numbers"):
         client.embed(["alpha", "beta"])
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [(0, [0.1] * 1536), (2, [0.2] * 1536)],
+        [(0, [0.1] * 1536), (1, [0.2] * 1535)],
+        [(0, [0.1] * 1536), (1, [0.2] * 1535 + [float("nan")])],
+    ],
+    ids=["indices", "dimension", "non-finite"],
+)
+def test_embed_validation_error_carries_spend_without_any_vectors(
+    monkeypatch: pytest.MonkeyPatch, data: list[tuple[object, list[object]]]
+) -> None:
+    _install_fake_openai(monkeypatch, prompt_tokens=100, data=data)
+    client = OpenAIClient(api_key="sk-x", embedding_model="text-embedding-3-small", analyst_model="gpt-5.4-mini")
+
+    with pytest.raises(EmbeddingValidationError) as exc:
+        client.embed(["alpha", "beta"])
+
+    assert isinstance(exc.value, ValueError)
+    assert exc.value.result.vectors == []
+    assert exc.value.result.model == "text-embedding-3-small"
+    assert exc.value.result.tokens_in == 100
+    assert exc.value.result.cost_gbp == pytest.approx(0.00000158)
 
 
 def test_get_client_builds_openai_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

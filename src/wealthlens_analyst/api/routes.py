@@ -51,7 +51,7 @@ from wealthlens_analyst.answer.compose import (
 )
 from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, RefusalResponse
 from wealthlens_analyst.budget.models import QueryDecision, record_query
-from wealthlens_analyst.llm.client import EmbeddingResult, get_client
+from wealthlens_analyst.llm.client import EmbeddingResult, EmbeddingValidationError, get_client
 from wealthlens_analyst.retrieval.dense import search_dense_by_vector
 from wealthlens_analyst.retrieval.fts import ChunkHit, search_fts
 from wealthlens_analyst.retrieval.fuse_rrf import fuse_rrf
@@ -315,6 +315,9 @@ def _run_retrieval(
         lexical = search_fts(question, limit=_PER_RETRIEVER_LIMIT, engine=engine)
         embedded = get_client().embed([question])
         dense = search_dense_by_vector(embedded.vectors[0], limit=_PER_RETRIEVER_LIMIT, engine=engine)
+    except EmbeddingValidationError as exc:
+        _record_error_best_effort(engine, question, exc.result, started)
+        raise
     except SQLAlchemyError as exc:
         logger.warning("ask: retrieval backend unavailable: %s", exc)
         # A connection-level failure (OperationalError) dooms the accounting
