@@ -18,10 +18,13 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from wealthlens_analyst.answer.citations import load_source_registry
 from wealthlens_analyst.api.routes import router
+from wealthlens_analyst.api.schemas import OverBudgetResponse
+from wealthlens_analyst.budget.middleware import REFUSAL_REASON_OVER_BUDGET, BudgetRefusal
 from wealthlens_analyst.config import load_settings
 from wealthlens_analyst.db import engine_from_settings
 from wealthlens_analyst.llm.client import get_client
@@ -81,4 +84,10 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     app.include_router(router)
+
+    @app.exception_handler(BudgetRefusal)
+    async def budget_refusal_handler(request: Request, exc: BudgetRefusal) -> JSONResponse:
+        body = OverBudgetResponse(mode="over_budget", question=exc.question, reason=REFUSAL_REASON_OVER_BUDGET)
+        return JSONResponse(status_code=429, content=body.model_dump())
+
     return app

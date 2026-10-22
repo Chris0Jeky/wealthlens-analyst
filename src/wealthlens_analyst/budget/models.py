@@ -13,17 +13,19 @@ Two tables (migrations/versions/0003_budgets.py and 0004_query_log.py):
   request is an accounting hole, not a cosmetic gap.
 
 The H1-15 write path lives here: `query_log_row` (pure — the row shape) and
-`record_query` (the insert). Pending: H1-27 (budget read/enforcement).
+`record_query` (the insert). Budget reads use the existing migrations (H1-27).
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
 
-from sqlalchemy import Engine
+import sqlalchemy as sa
+from sqlalchemy import Connection, Engine
 
 from wealthlens_analyst.db import query_log_table
 
@@ -125,6 +127,63 @@ def record_query(
         conn.execute(query_log_table.insert(), [row])
 
 
-def current_spend_gbp() -> float:
-    """Sum of query_log.cost_gbp within the active budget period."""
-    raise NotImplementedError("H1-27: budget accounting not yet implemented")
+# Read-only mirrors: asked_at is deliberately absent from db.query_log_table's
+# INSERT projection. DDL remains owned by migrations 0003/0004.
+budgets_table = sa.table(
+    "budgets",
+    sa.column("period_start", sa.Date),
+    sa.column("period_end", sa.Date),
+    sa.column("cap_gbp", sa.Numeric(8, 2)),
+    sa.column("active", sa.Boolean),
+)
+_spend_table = sa.table(
+    "query_log",
+    sa.column("asked_at", sa.TIMESTAMP(timezone=True)),
+    sa.column("cost_gbp", sa.Numeric(12, 8)),
+)
+
+
+class BudgetUnavailableError(ValueError):
+    """The budget cannot safely authorize spend."""
+
+
+def active_budget_cap_gbp(conn: Connection, *, now: datetime) -> Decimal:
+    """Read the active row covering today; period_end is exclusive.
+
+    Rollover requires deactivate-then-insert, as specified by migration 0003.
+    A stale, future, missing or zero-cap row never authorizes a request.
+    """
+    today = now.astimezone(UTC).date()
+    value = conn.execute(
+        sa.select(budgets_table.c.cap_gbp).where(
+            budgets_table.c.active.is_(True),
+            budgets_table.c.period_start <= today,
+            budgets_table.c.period_end > today,
+        )
+    ).scalar_one_or_none()
+    if value is None:
+        raise BudgetUnavailableError("No current active budget")
+    cap = Decimal(str(value))
+    if not cap.is_finite() or cap <= 0:
+        raise BudgetUnavailableError("Invalid active budget cap")
+    return cap
+
+
+def current_spend_gbp(conn: Connection, *, now: datetime) -> Decimal:
+    """Sum ALL recorded decisions in the half-open UTC calendar month.
+
+    Decimal arithmetic preserves query_log's scale-8 accounting. No rows means
+    zero spend, which is distinct from a missing budgets row (checked separately).
+    """
+    start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+    value = conn.execute(
+        sa.select(sa.func.coalesce(sa.func.sum(_spend_table.c.cost_gbp), 0)).where(
+            _spend_table.c.asked_at >= start,
+            _spend_table.c.asked_at < end,
+        )
+    ).scalar_one()
+    spend = Decimal(str(value))
+    if not spend.is_finite() or spend < 0:
+        raise BudgetUnavailableError("Invalid recorded spend")
+    return spend

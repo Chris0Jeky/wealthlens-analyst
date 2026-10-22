@@ -13,7 +13,8 @@ input, 500 generation/accounting failure, 503 unreachable DB).
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from datetime import date
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -31,6 +32,7 @@ from wealthlens_analyst.answer.citations import Citation, ResolvedCitations
 from wealthlens_analyst.answer.compose import ComposedAnswer, EmptyGenerationError
 from wealthlens_analyst.api.app import create_app
 from wealthlens_analyst.api.routes import get_engine, get_registry
+from wealthlens_analyst.budget.bounds import MAX_PROMPT_BYTES
 from wealthlens_analyst.budget.models import QueryDecision
 from wealthlens_analyst.llm.client import CompletionResult, EmbeddingResult, OpenAIClient
 from wealthlens_analyst.retrieval.fts import ChunkHit
@@ -163,6 +165,9 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
     monkeypatch.setattr(routes, "search_dense_by_vector", fake_dense_by_vector)
     monkeypatch.setattr(routes, "get_client", lambda: _FakeClient(calls))
     monkeypatch.setattr(routes, "record_query", fake_record_query)
+    # These tests isolate retrieval/answer behavior. The real guard and its
+    # route wiring are exercised against seeded accounting in test_budget_guard.
+    monkeypatch.setattr(routes, "budget_guard", lambda engine, question: nullcontext())
     # Default: gate answerable (compose-focused tests are decoupled from the
     # gate's uncalibrated thresholds). Gate-focused tests override this.
     monkeypatch.setattr(
@@ -280,6 +285,27 @@ def test_ask_plain_returns_a_cited_answer(harness: _Harness, monkeypatch: pytest
     assert citation["source_name"] == "Source 2"
     assert citation["url"] == "https://example.org/2"
     assert citation["access_date"] == "2026-06-01"
+
+
+@pytest.mark.parametrize("oversized_field", ["text", "source_id", "document_id", "section"])
+def test_oversized_prompt_refuses_before_generation(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, oversized_field: str
+) -> None:
+    evidence = [replace(_hit(1, 1, 1.0), **{oversized_field: "💷" * (MAX_PROMPT_BYTES // 4)})]
+    monkeypatch.setattr(routes, "fuse_rrf", lambda *args, **kwargs: evidence)
+
+    def no_generation(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Oversized content must not reach generation")
+
+    monkeypatch.setattr(routes, "compose_answer", no_generation)
+    response = harness.client.post("/ask", json={"question": "wealth"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "refusal"
+    assert response.json()["reason"] == "The retrieved evidence exceeds the request cost limit."
+    assert len(harness.recorded) == 1
+    assert harness.recorded[0]["decision"] == QueryDecision.REFUSED
+    assert harness.recorded[0]["cost_gbp"] == _EMBED_COST_GBP
+    assert harness.recorded[0]["tokens_out"] == 0
 
 
 def test_ask_plain_answer_row_sums_embed_and_generation_spend(

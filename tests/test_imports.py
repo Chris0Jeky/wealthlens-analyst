@@ -55,16 +55,13 @@ def test_pending_stubs_raise_not_implemented() -> None:
     schema (H1-20) and the abstention gate (H1-21) are implemented and pinned by
     their own test files. EVERY remaining pending seam is pinned here, so silently
     gutting a stub (e.g. an accidental `return []`) cannot survive the suite: the
-    reranker (H1-16, deferred until a COHERE_API_KEY exists) and budget accounting
-    (H1-27).
+    reranker (H1-16, deferred until a COHERE_API_KEY exists). Budget accounting
+    (H1-27) is now pinned by test_budget_guard.py.
     """
-    from wealthlens_analyst.budget.models import current_spend_gbp
     from wealthlens_analyst.retrieval.rerank import rerank
 
     with pytest.raises(NotImplementedError, match="H1-16"):
         rerank("q", [], top_k=1)
-    with pytest.raises(NotImplementedError, match="H1-27"):
-        current_spend_gbp()
 
 
 def test_budget_config_fail_closed_default(monkeypatch: pytest.MonkeyPatch) -> None:
