@@ -21,9 +21,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 from math import ceil
+from threading import Lock
+from time import monotonic
+from weakref import WeakKeyDictionary
 
 import sqlalchemy as sa
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
 from wealthlens_analyst.budget.models import QueryDecision
 
@@ -87,19 +90,110 @@ def summarize_queries(rows: Iterable[QueryMetric]) -> QueryMetrics:
     )
 
 
+@dataclass(frozen=True)
+class _CacheEntry:
+    start: datetime
+    summary: QueryMetrics
+    expires_at: float
+
+
+# One window per live engine, so rollover cannot grow the cache indefinitely.
+# Serialise refreshes as well as hits to prevent simultaneous public requests
+# from all scanning an expired window. Failed reads are never cached.
+_cache: WeakKeyDictionary[Engine, _CacheEntry] = WeakKeyDictionary()
+_cache_lock = Lock()
+_CACHE_TTL_SECONDS = 30
+
+
+def _read_metrics(conn: Connection, start: datetime, end: datetime) -> QueryMetrics:
+    window = sa.and_(_query_log.c.asked_at >= start, _query_log.c.asked_at < end)
+    served = _query_log.c.decision.in_((QueryDecision.ANSWERED, QueryDecision.REFUSED))
+    postgres = conn.dialect.name == "postgresql"
+    cost = _query_log.c.cost_gbp
+    # SQLite NUMERIC sums use floats. Sum integer eight-place units there so
+    # a floating-point accumulation error cannot change a half-even tie.
+    cost_sum = sa.func.sum(cost if postgres else sa.cast(sa.func.round(cost * 100_000_000), sa.BigInteger))
+    aggregates = [
+        sa.func.count().label("total"),
+        cost_sum.label("cost_sum"),
+        sa.func.count().filter(served).label("latency_count"),
+        *(
+            sa.func.count().filter(_query_log.c.decision == decision).label(decision.value)
+            for decision in QueryDecision
+        ),
+    ]
+    if postgres:
+        # percentile_disc chooses the first value whose cumulative fraction
+        # is >= p: rank ceil(p*n), exactly our nearest-rank latency definition.
+        # For cost, ascending/descending p50 give the two middle values when
+        # n is even (the same middle when odd), without float interpolation.
+        aggregates.extend(
+            [
+                sa.func.percentile_disc(0.50).within_group(_query_log.c.latency_ms).filter(served).label("p50"),
+                sa.func.percentile_disc(0.95).within_group(_query_log.c.latency_ms).filter(served).label("p95"),
+                sa.func.percentile_disc(0.50).within_group(cost).label("cost_lower"),
+                sa.func.percentile_disc(0.50).within_group(cost.desc()).label("cost_upper"),
+            ]
+        )
+    row = conn.execute(sa.select(*aggregates).where(window)).mappings().one()
+    n = row["total"]
+    mean = None
+    median = None
+    p50 = p95 = None
+    if n:
+        total_cost = row["cost_sum"] if postgres else Decimal(row["cost_sum"]) * _COST_QUANTUM
+        mean = (total_cost / n).quantize(_COST_QUANTUM, rounding=ROUND_HALF_EVEN)
+        if postgres:
+            middle = (row["cost_lower"] + row["cost_upper"]) / 2
+        else:
+            costs = (
+                conn.execute(
+                    sa.select(cost).where(window).order_by(cost).offset((n - 1) // 2).limit(2 if n % 2 == 0 else 1)
+                )
+                .scalars()
+                .all()
+            )
+            middle = sum(costs, Decimal(0)) / len(costs)
+        median = middle.quantize(_COST_QUANTUM, rounding=ROUND_HALF_EVEN)
+    if postgres:
+        p50, p95 = row["p50"], row["p95"]
+    elif row["latency_count"]:
+        latencies = (
+            conn.execute(sa.select(_query_log.c.latency_ms).where(window, served).order_by(_query_log.c.latency_ms))
+            .scalars()
+            .all()
+        )
+        p50 = latencies[ceil(0.50 * len(latencies)) - 1]
+        p95 = latencies[ceil(0.95 * len(latencies)) - 1]
+    return QueryMetrics(
+        total_queries=n,
+        decision_counts={decision: row[decision.value] for decision in QueryDecision},
+        latency_sample_count=row["latency_count"],
+        latency_p50_ms=p50,
+        latency_p95_ms=p95,
+        cost_mean_gbp=mean,
+        cost_median_gbp=median,
+    )
+
+
 def read_monthly_metrics(engine: Engine, *, now: datetime | None = None) -> tuple[datetime, datetime, QueryMetrics]:
-    """Read this UTC month's accounting; database failures propagate to the route."""
+    """Read UTC month metrics, cached in process for 30s per engine/window start.
+
+    Cached values may lag writes for up to 30s; month rollover bypasses them.
+    PostgreSQL reads have a transaction-local 2s statement timeout, which does
+    not persist on the pooled connection. Database failures propagate without
+    caching a failure or serving an expired value. SQLite has no SET LOCAL.
+    """
     now = now if now is not None else datetime.now(UTC)
     start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            sa.select(_query_log.c.decision, _query_log.c.latency_ms, _query_log.c.cost_gbp).where(
-                _query_log.c.asked_at >= start,
-                _query_log.c.asked_at < end,
-            )
-        ).mappings()
-        summary = summarize_queries(
-            QueryMetric(QueryDecision(row["decision"]), row["latency_ms"], row["cost_gbp"]) for row in rows
-        )
+    with _cache_lock:
+        cached = _cache.get(engine)
+        if cached is not None and cached.start == start and monotonic() < cached.expires_at:
+            return start, end, cached.summary
+        with engine.begin() as conn:
+            if conn.dialect.name == "postgresql":
+                conn.execute(sa.text("SET LOCAL statement_timeout = '2s'"))
+            summary = _read_metrics(conn, start, end)
+        _cache[engine] = _CacheEntry(start, summary, monotonic() + _CACHE_TTL_SECONDS)
     return start, end, summary

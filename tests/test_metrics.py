@@ -1,8 +1,10 @@
-"""H1-29: hand-checked math and seeded endpoint SQL, entirely offline."""
+"""H1-29: hand-checked metrics, SQLite fallback and CI Postgres aggregates."""
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,7 +14,7 @@ from unittest.mock import patch
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import DatabaseError, OperationalError
 from sqlalchemy.pool import StaticPool
 
@@ -101,8 +103,38 @@ def test_errors_and_cap_refusals_have_costs_but_no_latency_samples() -> None:
     assert summary.cost_mean_gbp == summary.cost_median_gbp == Decimal("0.30000000")
 
 
-@pytest.fixture()
-def engine() -> Iterator[Engine]:
+@pytest.fixture(params=["sqlite", "postgresql"])
+def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[Engine]:
+    if request.param == "postgresql":
+        url = os.environ.get("WEALTHLENS_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("WEALTHLENS_TEST_DATABASE_URL not configured; offline SQL coverage runs on SQLite")
+        engine = sa.create_engine(url, poolclass=StaticPool)
+        try:
+            with engine.connect() as conn, conn.begin() as transaction:
+                # Use CI's migrated table and keep every fixture write/DDL
+                # inside an outer transaction rolled back after each test.
+                conn.execute(sa.text("DELETE FROM query_log"))
+                conn.execute(sa.text("SET LOCAL TIME ZONE 'Pacific/Auckland'"))
+
+                @contextmanager
+                def connect() -> Iterator[Connection]:
+                    yield conn
+
+                @contextmanager
+                def begin() -> Iterator[Connection]:
+                    with conn.begin_nested():
+                        yield conn
+
+                monkeypatch.setattr(engine, "connect", connect)
+                monkeypatch.setattr(engine, "begin", begin)
+                try:
+                    yield engine
+                finally:
+                    transaction.rollback()
+        finally:
+            engine.dispose()
+        return
     engine = sa.create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     _LOG.create(engine)
     try:
@@ -113,7 +145,17 @@ def engine() -> Iterator[Engine]:
 
 def _seed(engine: Engine, rows: list[QueryMetric], *, when: datetime = _NOW) -> None:
     with engine.begin() as conn:
-        conn.execute(_LOG.insert(), [{"asked_at": when.astimezone(UTC), **asdict(row)} for row in rows])
+        if engine.dialect.name == "postgresql":
+            # The migrated table also requires a question hash, never read by metrics.
+            conn.execute(
+                sa.text("""
+                    INSERT INTO query_log (asked_at, question_sha, decision, latency_ms, cost_gbp)
+                    VALUES (:asked_at, 'fixture', :decision, :latency_ms, :cost_gbp)
+                """),
+                [{"asked_at": when.astimezone(UTC), **asdict(row)} for row in rows],
+            )
+        else:
+            conn.execute(_LOG.insert(), [{"asked_at": when.astimezone(UTC), **asdict(row)} for row in rows])
 
 
 @pytest.fixture()
@@ -189,6 +231,8 @@ def test_half_open_month_boundaries_and_utc_year_rollover(engine: Engine) -> Non
     assert summary.cost_mean_gbp == summary.cost_median_gbp == Decimal("20.00000000")
 
 
+# The Postgres fixture already owns a connection; exercise real connect events offline.
+@pytest.mark.parametrize("engine", ["sqlite"], indirect=True)
 @pytest.mark.parametrize("failure_at", ["connect", "execute"])
 def test_database_failure_returns_503_without_leaking_exception(
     engine: Engine, client: TestClient, caplog: pytest.LogCaptureFixture, failure_at: str
@@ -212,3 +256,151 @@ def test_openapi_documents_metrics_response() -> None:
         "Nearest-rank"
         in schema["components"]["schemas"]["MetricsResponse"]["properties"]["latency_p95_ms"]["description"]
     )
+
+
+@pytest.mark.parametrize("size", [1, 2, 3, 19, 20, 21, 40, 41])
+def test_sql_percentile_disc_matches_nearest_rank_for_odd_even_and_tied_samples(engine: Engine, size: int) -> None:
+    rows = [QueryMetric(QueryDecision.ANSWERED, i // 2, Decimal(i) / 100) for i in range(size, 0, -1)]
+    rows += [QueryMetric(QueryDecision.ERROR, 9999, Decimal("0.25"))]
+    _seed(engine, rows)
+    assert read_monthly_metrics(engine, now=_NOW)[2] == summarize_queries(rows)
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        ("0.00000001", "0.00000002"),
+        ("0.00000002", "0.00000003"),
+        ("9999.99999998", "9999.99999999"),
+        ("0.00000001", "0.00000002", "0.00000003"),
+    ],
+)
+def test_sql_cost_mean_and_median_are_exact_half_even(engine: Engine, costs: tuple[str, ...]) -> None:
+    rows = [QueryMetric(QueryDecision.OVER_BUDGET, 0, Decimal(cost)) for cost in costs]
+    _seed(engine, rows)
+    assert read_monthly_metrics(engine, now=_NOW)[2] == summarize_queries(rows)
+
+
+def test_cache_hit_avoids_all_database_queries(engine: Engine, client: TestClient) -> None:
+    _seed(engine, [QueryMetric(QueryDecision.ANSWERED, 7, Decimal("0.25"))])
+    with patch.object(engine, "begin", wraps=engine.begin) as begin:
+        first = client.get("/metrics/data")
+        assert first.status_code == 200
+        assert begin.call_count == 1
+        with patch.object(engine, "begin", side_effect=AssertionError("Cache hit accessed the database")):
+            second = client.get("/metrics/data")
+    assert second.json() == first.json()
+
+
+def test_cache_expires_after_30_seconds(engine: Engine, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(metrics, "monotonic", lambda: clock[0])
+    assert client.get("/metrics/data").json()["total_queries"] == 0
+    _seed(engine, [QueryMetric(QueryDecision.REFUSED, 12, Decimal("0.10"))])
+    clock[0] = 129.999
+    assert client.get("/metrics/data").json()["total_queries"] == 0
+    clock[0] = 130.0
+    assert client.get("/metrics/data").json()["total_queries"] == 1
+
+
+def test_cache_key_includes_window_start(engine: Engine) -> None:
+    _seed(engine, [QueryMetric(QueryDecision.ANSWERED, 7, Decimal("0.25"))], when=_END)
+    assert read_monthly_metrics(engine, now=_NOW)[2].total_queries == 0
+    start, _, summary = read_monthly_metrics(engine, now=_END)
+    assert start == _END
+    assert summary.total_queries == 1
+
+
+def test_expired_cache_failure_is_503_and_is_not_cached(
+    engine: Engine, client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr(metrics, "monotonic", lambda: clock[0])
+    assert client.get("/metrics/data").status_code == 200
+    clock[0] = 130.0
+    with patch.object(engine, "begin", side_effect=OperationalError("SELECT", {}, Exception("sensitive-detail"))):
+        for _ in range(2):
+            response = client.get("/metrics/data")
+            assert response.status_code == 503
+            assert response.json() == {"detail": "database unreachable"}
+    assert "sensitive-detail" not in caplog.text
+    assert client.get("/metrics/data").status_code == 200
+
+
+@pytest.mark.parametrize("engine", ["sqlite"], indirect=True)
+def test_sqlite_fallback_fetches_only_ordered_latency_and_middle_costs(engine: Engine) -> None:
+    _seed(engine, [QueryMetric(QueryDecision.ANSWERED, i, Decimal(i)) for i in range(10)])
+    statements: list[str] = []
+
+    def capture(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    sa.event.listen(engine, "before_cursor_execute", capture)
+    read_monthly_metrics(engine, now=_NOW)
+    assert len(statements) == 3
+    assert "count(*)" in statements[0] and "sum(" in statements[0]
+    assert statements[1].startswith("SELECT query_log.cost_gbp ")
+    assert "ORDER BY query_log.cost_gbp" in statements[1] and "LIMIT" in statements[1]
+    assert statements[2].startswith("SELECT query_log.latency_ms ")
+    assert "ORDER BY query_log.latency_ms" in statements[2]
+
+
+@pytest.mark.parametrize("engine", ["postgresql"], indirect=True)
+def test_postgres_aggregates_in_one_select_with_transaction_local_timeout(engine: Engine) -> None:
+    _seed(engine, [QueryMetric(QueryDecision.ANSWERED, 7, Decimal("0.25"))])
+    statements: list[str] = []
+    timeouts: list[str] = []
+
+    def capture(conn: Connection, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+        if "percentile_disc" in statement:
+            timeouts.append(conn.exec_driver_sql("SHOW statement_timeout").scalar_one())
+
+    sa.event.listen(engine, "before_cursor_execute", capture)
+    assert read_monthly_metrics(engine, now=_NOW)[2].total_queries == 1
+    selects = [statement for statement in statements if statement.startswith("SELECT")]
+    assert len(selects) == 1
+    assert selects[0].count("percentile_disc") == 4
+    assert "SET LOCAL statement_timeout = '2s'" in statements
+    assert timeouts == ["2s"]
+
+
+@pytest.mark.parametrize("engine", ["postgresql"], indirect=True)
+def test_postgres_timeout_returns_503_and_restores_setting(engine: Engine, client: TestClient) -> None:
+    with engine.connect() as conn:
+        original_timeout = conn.exec_driver_sql("SHOW statement_timeout").scalar_one()
+    sqlstates: list[str] = []
+
+    def slow_aggregate(conn: Any, cursor: Any, statement: str, parameters: Any, *args: Any) -> tuple[str, Any]:
+        if "percentile_disc" in statement:
+            return "SELECT pg_sleep(3)", {}
+        return statement, parameters
+
+    def capture_error(context: Any) -> None:
+        sqlstates.append(context.original_exception.sqlstate)
+
+    sa.event.listen(engine, "before_cursor_execute", slow_aggregate, retval=True)
+    sa.event.listen(engine, "handle_error", capture_error)
+    try:
+        response = client.get("/metrics/data")
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", slow_aggregate)
+        sa.event.remove(engine, "handle_error", capture_error)
+    assert sqlstates == ["57014"]  # PostgreSQL query_canceled, not a SQL/connection error.
+    assert response.status_code == 503
+    assert response.json() == {"detail": "database unreachable"}
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SHOW statement_timeout").scalar_one() == original_timeout
+        assert conn.exec_driver_sql("SELECT 1").scalar_one() == 1
+
+
+@pytest.mark.parametrize("engine", ["sqlite"], indirect=True)
+def test_cache_does_not_reuse_another_engines_result(engine: Engine) -> None:
+    _seed(engine, [QueryMetric(QueryDecision.ANSWERED, 7, Decimal("0.25"))])
+    other = sa.create_engine("sqlite://")
+    try:
+        _LOG.create(other)
+        assert read_monthly_metrics(engine, now=_NOW)[2].total_queries == 1
+        assert read_monthly_metrics(other, now=_NOW)[2].total_queries == 0
+    finally:
+        other.dispose()
