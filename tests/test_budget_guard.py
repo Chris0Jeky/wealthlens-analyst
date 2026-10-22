@@ -1,8 +1,9 @@
-"""H1-27: seeded accounting -> exact 429, with no Postgres or model calls.
+"""H1-27: seeded accounting -> exact 429, with no model calls.
 
 The budget queries use portable Core SQL, so SQLite exercises real filtering,
 aggregation and inserts offline. The same tests optionally run on Postgres via
-WEALTHLENS_TEST_DATABASE_URL, using session-local temporary tables only.
+WEALTHLENS_TEST_DATABASE_URL, against the real Alembic-migrated tables. Each
+Postgres case rolls back its data and frozen server clock at teardown.
 Retrieval/provider seams alone are faked.
 """
 
@@ -12,6 +13,7 @@ import hashlib
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from threading import Event
@@ -19,9 +21,11 @@ from typing import Any
 
 import pytest
 import sqlalchemy as sa
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import Connection, Engine
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.pool import StaticPool
 
 import wealthlens_analyst.api.routes as routes
@@ -56,14 +60,45 @@ def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> I
         if not url:
             pytest.skip("WEALTHLENS_TEST_DATABASE_URL not configured; offline SQL coverage runs on SQLite")
         engine = sa.create_engine(url, poolclass=StaticPool)
-        timestamp_type = "TIMESTAMP WITH TIME ZONE"
+        try:
+            with engine.connect() as conn, conn.begin() as transaction:
+                head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+                assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one() == head
+                # Keep the migrated identities, defaults, checks and partial index.
+                # All application transactions use savepoints on this connection,
+                # so even committed accounting and DDL roll back after each case.
+                conn.execute(sa.text("SET LOCAL TIME ZONE 'Pacific/Auckland'"))
+                conn.execute(sa.text("DELETE FROM query_log"))
+                conn.execute(sa.text("DELETE FROM budgets"))
+                conn.execute(sa.text(f"ALTER TABLE query_log ALTER COLUMN asked_at SET DEFAULT '{_NOW.isoformat()}'"))
+                conn.execute(
+                    sa.text("""
+                    INSERT INTO budgets (period_start, period_end, cap_gbp, active)
+                    VALUES ('2026-12-01', '2027-01-01', 10, true)
+                    """)
+                )
+
+                @contextmanager
+                def connect() -> Iterator[Connection]:
+                    yield conn
+
+                @contextmanager
+                def begin() -> Iterator[Connection]:
+                    with conn.begin_nested():
+                        yield conn
+
+                monkeypatch.setattr(engine, "connect", connect)
+                monkeypatch.setattr(engine, "begin", begin)
+                try:
+                    yield engine
+                finally:
+                    transaction.rollback()
+        finally:
+            engine.dispose()
+        return
     else:
         engine = sa.create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-        timestamp_type = "TIMESTAMP"
     with engine.begin() as conn:
-        if engine.dialect.name == "postgresql":
-            # Exercise UTC boundaries even when the DB session uses another zone.
-            conn.execute(sa.text("SET TIME ZONE 'Pacific/Auckland'"))
         conn.execute(
             sa.text("""
             CREATE TEMPORARY TABLE budgets (
@@ -74,11 +109,11 @@ def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> I
         )
         # Freeze BOTH clocks: admission and query_log's server default. Real
         # CURRENT_TIMESTAMP would put new spend outside the guard's frozen month.
-        stored_now = _NOW.isoformat() if engine.dialect.name == "postgresql" else _NOW.strftime("%Y-%m-%d %H:%M:%S.%f")
+        stored_now = _NOW.strftime("%Y-%m-%d %H:%M:%S.%f")
         conn.execute(
             sa.text(f"""
             CREATE TEMPORARY TABLE query_log (
-                asked_at {timestamp_type} NOT NULL DEFAULT '{stored_now}',
+                asked_at TIMESTAMP NOT NULL DEFAULT '{stored_now}',
                 question_sha TEXT NOT NULL, decision TEXT NOT NULL,
                 gate_signal FLOAT, tokens_in INTEGER NOT NULL,
                 tokens_out INTEGER NOT NULL, cost_gbp NUMERIC(12, 8) NOT NULL,
@@ -91,8 +126,10 @@ def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> I
             INSERT INTO budgets VALUES ('2026-12-01', '2027-01-01', 10, true)
         """)
         )
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 def _seed_spend(
@@ -268,7 +305,12 @@ def test_rollover_resets_spend_only_with_a_new_active_budget(engine: Engine, mon
             active_budget_cap_gbp(conn, now=january)
     with engine.begin() as conn:
         conn.execute(sa.text("UPDATE budgets SET active = false"))
-        conn.execute(sa.text("INSERT INTO budgets VALUES ('2027-01-01', '2027-02-01', 10, true)"))
+        conn.execute(
+            sa.text("""
+            INSERT INTO budgets (period_start, period_end, cap_gbp, active)
+            VALUES ('2027-01-01', '2027-02-01', 10, true)
+            """)
+        )
     with engine.connect() as conn:
         assert active_budget_cap_gbp(conn, now=january) == Decimal("10")
         assert current_spend_gbp(conn, now=january) == Decimal("0")
@@ -281,8 +323,9 @@ def test_spend_uses_utc_half_open_month_and_all_decisions(engine: Engine, decisi
     # New Year's midnight +01:00 is still December in UTC.
     offset_now = datetime(2027, 1, 1, tzinfo=timezone(timedelta(hours=1)))
     for when, expected in [
-        (datetime(2026, 11, 30, 23, 59, 59, tzinfo=UTC), Decimal("0")),
+        (datetime(2026, 12, 1, tzinfo=UTC) - timedelta(microseconds=1), Decimal("0")),
         (datetime(2026, 12, 1, tzinfo=UTC), Decimal("0.00000025")),
+        (datetime(2027, 1, 1, tzinfo=UTC) - timedelta(microseconds=1), Decimal("0.00000025")),
         (datetime(2027, 1, 1, tzinfo=UTC), Decimal("0")),
     ]:
         with engine.begin() as conn:
@@ -290,6 +333,45 @@ def test_spend_uses_utc_half_open_month_and_all_decisions(engine: Engine, decisi
         _seed_spend(engine, 0.00000025, when, decision)
         with engine.connect() as conn:
             assert current_spend_gbp(conn, now=offset_now) == expected
+
+
+@pytest.mark.parametrize("engine", ["postgresql"], indirect=True)
+def test_migrated_budgets_allow_only_one_active_row(engine: Engine) -> None:
+    # Omit active to exercise migration 0003's true default as well as its index.
+    with pytest.raises(IntegrityError) as error, engine.begin() as conn:
+        conn.execute(
+            sa.text("""
+            INSERT INTO budgets (period_start, period_end, cap_gbp)
+            VALUES ('2027-01-01', '2027-02-01', 20)
+            """)
+        )
+    assert error.value.orig.diag.constraint_name == "budgets_one_active"  # type: ignore[union-attr]
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text("""
+            INSERT INTO budgets (period_start, period_end, cap_gbp, active)
+            VALUES ('2027-01-01', '2027-02-01', 20, false),
+                   ('2027-02-01', '2027-03-01', 30, false)
+            """)
+        )
+    # Activating an existing historical row must hit the same partial index.
+    with pytest.raises(IntegrityError) as error, engine.begin() as conn:
+        conn.execute(sa.text("UPDATE budgets SET active = true WHERE period_start = '2027-01-01'"))
+    assert error.value.orig.diag.constraint_name == "budgets_one_active"  # type: ignore[union-attr]
+    with engine.connect() as conn:
+        assert conn.execute(sa.text("SELECT count(*) FROM budgets WHERE active")).scalar_one() == 1
+        assert conn.execute(sa.text("SELECT count(*) FROM budgets WHERE NOT active")).scalar_one() == 2
+
+
+@pytest.mark.parametrize("engine", ["postgresql"], indirect=True)
+def test_migrated_budget_period_uses_utc_at_rollover(engine: Engine) -> None:
+    # Auckland is already in January, but both instants below are December in UTC.
+    with engine.connect() as conn:
+        for now in (_NOW, datetime(2027, 1, 1, tzinfo=timezone(timedelta(hours=1)))):
+            assert active_budget_cap_gbp(conn, now=now) == Decimal("10")
+        for now in (datetime(2026, 12, 1, tzinfo=UTC) - timedelta(microseconds=1), datetime(2027, 1, 1, tzinfo=UTC)):
+            with pytest.raises(BudgetUnavailableError):
+                active_budget_cap_gbp(conn, now=now)
 
 
 def test_free_routes_and_validation_never_run_guard(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
