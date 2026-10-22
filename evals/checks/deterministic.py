@@ -7,8 +7,9 @@ questions; DRAFT entries are counted and skipped for refusal correctness.
 
 Recording format: recorded_responses.schema.json. Response bodies also validate
 against api/schemas.py models and the published ask_response.schema.json.
-Citation resolution here means inline ids resolve in the response citation list;
-it cannot verify database existence or provenance truth offline.
+Citation checks require canonical inline ids to match the response citation list
+and source ids to belong to the app's corpus registry. They cannot verify database
+existence or provenance truth offline.
 
 Latency/cost checks are STUB bounds over recorded per-request measurements:
 120,000 ms and GBP 1.00 by default (inclusive, deliberately generous). Override
@@ -30,7 +31,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,8 @@ from typing import Any
 import jsonschema
 from pydantic import TypeAdapter, ValidationError
 
+from wealthlens_analyst.answer.citations import load_source_registry
+from wealthlens_analyst.answer.compose import _CITATION_NEAR_RE, _CITATION_RE, _MAX_CHUNK_ID
 from wealthlens_analyst.api.schemas import AskResponse
 
 CHECKS_DIR = Path(__file__).resolve().parent
@@ -52,15 +54,10 @@ ASK_RESPONSE_SCHEMA = CHECKS_DIR / "ask_response.schema.json"
 RECORDING_SCHEMA = CHECKS_DIR / "recorded_responses.schema.json"
 SYNTHETIC_RESPONSES = CHECKS_DIR / "fixtures" / "synthetic_responses.json"
 SYNTHETIC_QUESTIONS = CHECKS_DIR / "fixtures" / "synthetic_questions.json"
+SOURCE_REGISTRY = CHECKS_DIR.parents[1] / "registries" / "sources.yml"
 DEFAULT_MAX_LATENCY_MS = 120_000.0
 DEFAULT_MAX_COST_GBP = 1.0
 _ASK_ADAPTER: TypeAdapter[Any] = TypeAdapter(AskResponse)
-
-#: Citation-shaped marker, LENIENT (mirrors answer.compose._CITATION_STRIP_RE):
-#: catches strict "[chunk:9140]" AND format-drift near-misses ("[chunk: 99]",
-#: "[CHUNK=99]") so the check flags a leaked drift marker, not just a strict
-#: one. Any matched id not among the served citations is an orphan (policy leak).
-_MARKER_RE = re.compile(r"\[\s*chunk\s*[:=]?\s*(\d+)\s*\]", re.IGNORECASE)
 
 
 def load_golden_records() -> list[dict[str, Any]]:
@@ -128,15 +125,16 @@ def check_golden_static() -> list[str]:
     return failures
 
 
-def _check_ask_response(body: dict[str, Any], validator: jsonschema.Draft202012Validator) -> list[str]:
+def _check_ask_response(
+    body: dict[str, Any], validator: jsonschema.Draft202012Validator, source_ids: set[str] | None = None
+) -> list[str]:
     """Validate one recorded /ask body against the contract and its invariants.
 
     Schema validity is the H1-20 done-when — and the schema already enforces
     ``mode`` (the discriminator) and, for an answer, ``citations`` minItems:1.
-    The one invariant the schema cannot express is cross-field: an ``answer``
-    body must not carry an inline ``[chunk:<id>]`` marker (strict OR drift form)
-    for an id that is not among its served citations (the serving policy —
-    fabricated / pruned / drift markers are stripped before serving).
+    Cross-field invariants mirror serving: every citation-shaped token must be
+    canonical and within BIGINT, at least one must exist, and inline ids must
+    equal listed citation ids. Every citation source must be in the app registry.
     """
     schema_failures = [f"schema violation: {error.message}" for error in validator.iter_errors(body)]
     if schema_failures:
@@ -150,11 +148,29 @@ def _check_ask_response(body: dict[str, Any], validator: jsonschema.Draft202012V
         return ["schema violation: response rejected by api/schemas.py models"]
     failures: list[str] = []
     if body.get("mode") == "answer":
+        if source_ids is None:
+            source_ids = set(load_source_registry(SOURCE_REGISTRY))
         cited_ids = {citation["chunk_id"] for citation in body.get("citations", [])}
-        markers = {int(match) for match in _MARKER_RE.findall(body.get("answer", ""))}
+        markers: set[int] = set()
+        for token in _CITATION_NEAR_RE.finditer(body["answer"]):
+            match = _CITATION_RE.fullmatch(token.group())
+            if match is None or len(match.group(1)) > 19 or int(match.group(1)) > _MAX_CHUNK_ID:
+                failures.append(
+                    f"answer body leaks unresolved citation markers (invalid citation marker): {token.group()[:128]!r}"
+                )
+                continue
+            markers.add(int(match.group(1)))
+        if not markers:
+            failures.append("answer body has zero citation markers")
         orphan_markers = sorted(markers - cited_ids)
         if orphan_markers:
             failures.append(f"answer body leaks unresolved citation markers: {orphan_markers}")
+        uncited_ids = sorted(cited_ids - markers)
+        if uncited_ids:
+            failures.append(f"answer body has uncited citation ids: {uncited_ids}")
+        unknown_sources = sorted({citation["source_id"] for citation in body["citations"]} - source_ids)
+        if unknown_sources:
+            failures.append(f"answer citations have unknown corpus source ids: {unknown_sources}")
     return failures
 
 
@@ -183,6 +199,7 @@ def check_recorded_responses(
         return failures
     schema = json.loads(ASK_RESPONSE_SCHEMA.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(schema)
+    source_ids = set(load_source_registry(SOURCE_REGISTRY))
     by_id = {q["id"]: q for q in questions}
     seen: set[str] = set()
     checked: set[str] = set()
@@ -192,7 +209,7 @@ def check_recorded_responses(
             failures.append(f"{question_id}: duplicate response id")
         seen.add(question_id)
         body = record["response"]
-        failures.extend(f"{question_id}: {failure}" for failure in _check_ask_response(body, validator))
+        failures.extend(f"{question_id}: {failure}" for failure in _check_ask_response(body, validator, source_ids))
         for metric, bound in (("latency_ms", max_latency_ms), ("cost_gbp", max_cost_gbp)):
             value = record[metric]
             if value > bound or not math.isfinite(value):

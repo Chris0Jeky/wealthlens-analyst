@@ -10,7 +10,7 @@
         "answer": "SYNTHETIC response for checker testing only [chunk:101].",
         "citations": [{
           "chunk_id": 101,
-          "source_id": "synthetic-source",
+          "source_id": "ons-was-wealth",
           "source_name": "SYNTHETIC fixture, not corpus evidence",
           "document_id": "synthetic-document",
           "section": "Synthetic section",

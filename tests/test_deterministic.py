@@ -37,7 +37,7 @@ def test_recording_schema_and_synthetic_fixture(capsys: pytest.CaptureFixture[st
     [
         ({"citations": []}, "schema violation"),
         ({"answer": "Synthetic orphan [chunk:999]."}, "unresolved citation markers: [999]"),
-        ({"answer": "Synthetic drift orphan [CHUNK=999]."}, "unresolved citation markers: [999]"),
+        ({"answer": "Synthetic drift orphan [CHUNK=999]."}, "invalid citation marker"),
         ({"mode": "unknown"}, "schema violation"),
     ],
 )
@@ -45,6 +45,61 @@ def test_invalid_answer_fails(change: dict[str, Any], message: str) -> None:
     recording, questions = _inputs()
     recording["records"][0]["response"].update(change)
     assert any(message in failure for failure in det.check_recorded_responses(recording, questions))
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "[chunk: 101]",
+        "[CHUNK:101]",
+        "[chunk:0101]",
+        "[chunk:abc]",
+        "[chunk:1",
+        "[chunk:0]",
+        f"[chunk:{2**63}]",
+        pytest.param(f"[chunk:{'9' * 5000}]", id="oversized-id"),
+    ],
+)
+def test_noncanonical_marker_fails_even_with_a_valid_citation(marker: str) -> None:
+    recording, questions = _inputs()
+    recording["records"][0]["response"]["answer"] = f"Synthetic valid [chunk:101] and invalid {marker}"
+    assert any("invalid citation marker" in failure for failure in det.check_recorded_responses(recording, questions))
+
+
+def test_answer_without_inline_markers_fails() -> None:
+    recording, questions = _inputs()
+    recording["records"][0]["response"]["answer"] = "Synthetic uncited answer."
+    assert any("zero citation markers" in failure for failure in det.check_recorded_responses(recording, questions))
+
+
+def test_uncited_citation_fails() -> None:
+    recording, questions = _inputs()
+    citations = recording["records"][0]["response"]["citations"]
+    citations.append({**citations[0], "chunk_id": 102})
+    assert any(
+        "uncited citation ids: [102]" in failure for failure in det.check_recorded_responses(recording, questions)
+    )
+
+
+@pytest.mark.parametrize("citation_index", [0, 1])
+def test_unknown_corpus_source_fails(citation_index: int) -> None:
+    recording, questions = _inputs()
+    body = recording["records"][0]["response"]
+    body["answer"] = "Synthetic citations [chunk:101] [chunk:102]."
+    body["citations"].append({**body["citations"][0], "chunk_id": 102})
+    body["citations"][citation_index]["source_id"] = "synthetic-unknown-source"
+    assert any(
+        "unknown corpus source ids: ['synthetic-unknown-source']" in failure
+        for failure in det.check_recorded_responses(recording, questions)
+    )
+
+
+def test_valid_canonical_markers_match_citation_set() -> None:
+    recording, questions = _inputs()
+    body = recording["records"][0]["response"]
+    body["answer"] = "Synthetic repeated [chunk:101] [chunk:102] [chunk:101]."
+    body["citations"].insert(0, {**body["citations"][0], "chunk_id": 102})
+    assert det.check_recorded_responses(recording, questions) == []
 
 
 def test_pydantic_models_reject_invalid_wire_date() -> None:
