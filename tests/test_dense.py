@@ -8,9 +8,14 @@ a model call.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
+from sqlalchemy import Engine
 
 import wealthlens_analyst.retrieval.dense as dense
+from wealthlens_analyst.llm.client import LLMClient
 from wealthlens_analyst.retrieval.dense import embed_corpus, search_dense, search_dense_by_vector
 
 
@@ -35,6 +40,25 @@ def test_embed_corpus_non_positive_batch_size_fails_loud() -> None:
         embed_corpus(batch_size=0)
     with pytest.raises(ValueError, match="batch_size"):
         embed_corpus(batch_size=-5)
+
+
+def test_embed_corpus_client_error_inserts_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = MagicMock(spec=Engine)
+    conn = engine.connect.return_value.__enter__.return_value
+    conn.execute.return_value.all.return_value = [
+        SimpleNamespace(chunk_id=1, text="alpha"),
+        SimpleNamespace(chunk_id=2, text="beta"),
+    ]
+    client = MagicMock(spec=LLMClient)
+    client.embed.side_effect = ValueError("OpenAI embedding response has invalid indices")
+    monkeypatch.setattr(dense, "get_client", lambda: client)
+
+    with pytest.raises(ValueError, match="indices"):
+        embed_corpus(engine=engine)
+
+    client.embed.assert_called_once_with(["alpha", "beta"])
+    conn.execute.assert_called_once_with(dense._UNEMBEDDED_SQL)
+    engine.begin.assert_not_called()
 
 
 def test_search_dense_by_vector_negative_limit_fails_loud() -> None:

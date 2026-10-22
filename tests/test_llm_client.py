@@ -33,12 +33,17 @@ def test_embedding_cost_unknown_model_fails_loud() -> None:
         embedding_cost_gbp("text-embedding-9-imaginary", 100)
 
 
-def _install_fake_openai(monkeypatch: pytest.MonkeyPatch, *, prompt_tokens: int) -> dict[str, object]:
+def _install_fake_openai(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    prompt_tokens: int,
+    data: list[tuple[object, list[object]]] | None = None,
+) -> dict[str, object]:
     """Install a fake `openai` module; return a dict capturing the call args."""
     captured: dict[str, object] = {}
 
     class _Item:
-        def __init__(self, embedding: list[float], index: int) -> None:
+        def __init__(self, embedding: list[object], index: object) -> None:
             self.embedding = embedding
             self.index = index
 
@@ -49,7 +54,11 @@ def _install_fake_openai(monkeypatch: pytest.MonkeyPatch, *, prompt_tokens: int)
     class _Response:
         def __init__(self) -> None:
             # Deliberately OUT OF ORDER so the index-sort is exercised.
-            self.data = [_Item([0.2] * 1536, 1), _Item([0.1] * 1536, 0)]
+            self.data = (
+                [_Item([0.2] * 1536, 1), _Item([0.1] * 1536, 0)]
+                if data is None
+                else [_Item(vector, index) for index, vector in data]
+            )
             self.usage = _Usage(prompt_tokens)
 
     class _Embeddings:
@@ -88,6 +97,37 @@ def test_embed_maps_and_aligns_by_index(monkeypatch: pytest.MonkeyPatch) -> None
     assert captured["model"] == "text-embedding-3-small"
     assert captured["api_key"] == "sk-x"
     assert captured["input"] == ["alpha", "beta"]
+
+
+@pytest.mark.parametrize(
+    "indices",
+    [[0, 0], [0], [], [0, 2], [-1, 1], [0, 1, 2], [False, 1], [0.0, 1], ["0", 1]],
+    ids=["duplicate", "missing", "empty", "out-of-range", "negative", "extra", "bool", "float", "string"],
+)
+def test_embed_rejects_invalid_indices(monkeypatch: pytest.MonkeyPatch, indices: list[object]) -> None:
+    _install_fake_openai(monkeypatch, prompt_tokens=7, data=[(index, [0.1] * 1536) for index in indices])
+    client = OpenAIClient(api_key="sk-x", embedding_model="text-embedding-3-small", analyst_model="gpt-5.4-mini")
+
+    with pytest.raises(ValueError, match="indices"):
+        client.embed(["alpha", "beta"])
+
+
+@pytest.mark.parametrize("dimension", [1535, 1537])
+def test_embed_rejects_wrong_dimension(monkeypatch: pytest.MonkeyPatch, dimension: int) -> None:
+    _install_fake_openai(monkeypatch, prompt_tokens=7, data=[(0, [0.1] * 1536), (1, [0.2] * dimension)])
+    client = OpenAIClient(api_key="sk-x", embedding_model="text-embedding-3-small", analyst_model="gpt-5.4-mini")
+
+    with pytest.raises(ValueError, match="dims, expected 1536"):
+        client.embed(["alpha", "beta"])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), "0.1", None, True])
+def test_embed_rejects_non_finite_or_non_numeric_values(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
+    _install_fake_openai(monkeypatch, prompt_tokens=7, data=[(0, [0.1] * 1536), (1, [0.2] * 1535 + [value])])
+    client = OpenAIClient(api_key="sk-x", embedding_model="text-embedding-3-small", analyst_model="gpt-5.4-mini")
+
+    with pytest.raises(ValueError, match="finite numbers"):
+        client.embed(["alpha", "beta"])
 
 
 def test_get_client_builds_openai_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
