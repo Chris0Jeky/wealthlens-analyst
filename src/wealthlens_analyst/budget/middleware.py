@@ -38,7 +38,12 @@ logger = logging.getLogger(__name__)
 # Stable machine-readable reason served in the 429 body.
 REFUSAL_REASON_OVER_BUDGET = "over_budget"
 
-_reservation_lock = Lock()
+# Two locks so a slow or hung database read can never block reservation release:
+# _admission_lock serialises the spend read + decision (acquired with a timeout,
+# refusing when it expires); _counter_lock only guards the in-flight total.
+_admission_lock = Lock()
+_counter_lock = Lock()
+_ADMISSION_TIMEOUT_S = 10.0
 _in_flight_reserved = Decimal("0")
 
 
@@ -57,7 +62,8 @@ def budget_guard(engine: Engine, question: str, *, now: datetime | None = None) 
     Called only by /ask, after input validation and before retrieval, so free
     routes stay exempt. Both configured and persisted caps bind: the lower wins.
     The caller must keep success/refusal/error query_log writes INSIDE the context.
-    The lock covers the spend read, comparison and reservation; model calls run
+    The admission lock covers the spend read and decision; the counter lock alone
+    covers reserve/release, so a hung read cannot block release. Model calls run
     unlocked. Reservations are per process, matching ADR 0003's single uvicorn
     worker deployment. They do not coordinate multiple processes or other spenders.
     """
@@ -74,14 +80,23 @@ def budget_guard(engine: Engine, question: str, *, now: datetime | None = None) 
         if not cap.is_finite() or cap <= 0:
             raise BudgetUnavailableError("Invalid configured budget cap")
         bound = request_cost_bound_gbp(question, settings)
-        with _reservation_lock:
-            now = now or datetime.now(UTC)
-            with engine.connect() as conn:
-                row_cap = active_budget_cap_gbp(conn, now=now)
-                spend = current_spend_gbp(conn, now=now)
-            if spend + _in_flight_reserved + bound <= min(cap, row_cap):
-                _in_flight_reserved += bound
-                reserved = bound
+        if not _admission_lock.acquire(timeout=_ADMISSION_TIMEOUT_S):
+            # Another admission is stuck on the database: fail closed, and skip the
+            # refusal row (it would wait on the same database).
+            logger.warning("budget: admission timed out; spending blocked")
+            read_failed = True
+        else:
+            try:
+                now = now or datetime.now(UTC)
+                with engine.connect() as conn:
+                    row_cap = active_budget_cap_gbp(conn, now=now)
+                    spend = current_spend_gbp(conn, now=now)
+                with _counter_lock:
+                    if spend + _in_flight_reserved + bound <= min(cap, row_cap):
+                        _in_flight_reserved += bound
+                        reserved = bound
+            finally:
+                _admission_lock.release()
     except (ValueError, InvalidOperation):
         logger.warning("budget: invalid or unavailable budget; spending blocked")
     except SQLAlchemyError:
@@ -93,7 +108,7 @@ def budget_guard(engine: Engine, question: str, *, now: datetime | None = None) 
         try:
             yield
         finally:
-            with _reservation_lock:
+            with _counter_lock:
                 _in_flight_reserved -= reserved
         return
 

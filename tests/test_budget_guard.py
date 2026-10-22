@@ -459,3 +459,31 @@ def test_billed_generation_error_is_recorded_before_reservation_release(
         assert conn.execute(sa.text("SELECT decision FROM query_log WHERE decision = 'error'")).scalar_one() == "error"
     assert client.post("/ask?debug=retrieval", json={"question": _QUESTION}).status_code == 200
     assert middleware._in_flight_reserved == 0
+
+
+def test_stuck_admission_cannot_block_release_and_new_requests_fail_closed(
+    engine: Engine, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung spend read holds only the admission lock: releases still run, new admissions refuse."""
+    _seed_spend(engine, 5)
+    _stub_retrieval(monkeypatch)
+    monkeypatch.setattr(middleware, "_ADMISSION_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(
+        routes,
+        "get_client",
+        lambda: type("C", (), {"embed": lambda self, texts: EmbeddingResult([[0.1]], "fake", 1, 0.001)})(),
+    )
+    # A first request is admitted and finishes while another admission is "stuck".
+    middleware._admission_lock.acquire()
+    try:
+        middleware._in_flight_reserved = Decimal("0.5")
+        with middleware._counter_lock:  # release path only needs the counter lock
+            middleware._in_flight_reserved -= Decimal("0.5")
+        assert middleware._in_flight_reserved == 0
+        response = client.post("/ask?debug=retrieval", json={"question": _QUESTION})
+        assert response.status_code == 429
+        assert response.json() == _BODY
+    finally:
+        middleware._admission_lock.release()
+    assert client.post("/ask?debug=retrieval", json={"question": _QUESTION}).status_code == 200
+    assert middleware._in_flight_reserved == 0
