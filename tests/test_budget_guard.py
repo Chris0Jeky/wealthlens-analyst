@@ -299,9 +299,7 @@ def test_free_routes_and_validation_never_run_guard(client: TestClient, monkeypa
     monkeypatch.setattr(routes, "budget_guard", no_guard)
     assert client.get("/healthz").status_code == 200
     assert client.get("/openapi.json").status_code == 200
-    # Metrics itself remains H1-29's stub; its route must remain guard-exempt.
-    with pytest.raises(NotImplementedError, match="H1-29"):
-        client.get("/metrics/data")
+    assert client.get("/metrics/data").status_code == 200
     assert client.post("/ask", json={"question": " "}).status_code == 422
     assert client.post("/ask?debug=unknown", json={"question": _QUESTION}).status_code == 422
 
