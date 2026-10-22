@@ -71,7 +71,7 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 - [ ] H1-26 (M5) `make eval-report`: one committed markdown report combining deterministic + RAGAS + latency/cost percentiles — done when the report is generated from a single command and committed under `evals/reports/`. [deps: H1-23, H1-25]
 - [x] H1-27 (M5) Budget enforcement: `budget/models.py` + `budget/middleware.py` live — cap from `BUDGET_MONTHLY_CAP_GBP`, fail-closed on missing budget row, 429 + structured refusal when exceeded — done when a test exhausts a seeded budget and asserts the 429 body. [deps: H1-15]
 - [ ] H1-28 (M5) Self-hosted Langfuse (docker-compose) + OTel tracing on /ask spans (retrieve, rerank, compose) — done when a local query produces a complete trace in Langfuse. [deps: H1-13]
-- [ ] H1-29 (M5) Metrics endpoint: p50/p95 latency + cost/query computed from `query_log` — done when the endpoint serves correct percentiles over seeded fixture rows (unit-tested math). [deps: H1-15, H1-27]
+- [x] H1-29 (M5) Metrics endpoint: p50/p95 latency + cost/query computed from `query_log` — done when the endpoint serves correct percentiles over seeded fixture rows (unit-tested math). [deps: H1-15, H1-27]
 
 ## M6 — ship
 

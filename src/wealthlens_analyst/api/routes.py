@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Annotated, Literal, Protocol
 
 import sqlalchemy as sa
@@ -49,8 +50,15 @@ from wealthlens_analyst.answer.compose import (
     EmptyGenerationError,
     compose_answer,
 )
-from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, OverBudgetResponse, RefusalResponse
+from wealthlens_analyst.api.schemas import (
+    AnswerResponse,
+    CitationModel,
+    MetricsResponse,
+    OverBudgetResponse,
+    RefusalResponse,
+)
 from wealthlens_analyst.budget.bounds import prompt_fits_bound
+from wealthlens_analyst.budget.metrics import read_monthly_metrics
 from wealthlens_analyst.budget.middleware import budget_guard
 from wealthlens_analyst.budget.models import QueryDecision, record_query
 from wealthlens_analyst.llm.client import EmbeddingResult, EmbeddingValidationError, get_client
@@ -506,6 +514,16 @@ def ask(
 
 
 @router.get("/metrics/data")
-def metrics_data() -> dict[str, object]:
-    """Serve p50/p95 latency and cost-per-query aggregates from query_log."""
-    raise NotImplementedError("H1-29: metrics endpoint not yet implemented")
+def metrics_data(engine: Annotated[Engine, Depends(get_engine)]) -> MetricsResponse:
+    """Serve current UTC month metrics. Free, cap-exempt, with no model calls or writes.
+
+    See MetricsResponse for the stable keys, populations and percentile rules.
+    Database failures return 503, like /healthz.
+    """
+    try:
+        start, end, summary = read_monthly_metrics(engine)
+    except SQLAlchemyError as exc:
+        # Connection errors may contain credentials: never log exception text.
+        logger.warning("metrics: database unreachable")
+        raise HTTPException(status_code=503, detail="database unreachable") from exc
+    return MetricsResponse(window_start=start, window_end=end, **asdict(summary))
