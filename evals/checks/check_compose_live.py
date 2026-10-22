@@ -55,6 +55,9 @@ def main() -> int:
     )
     print(f"cited={answer.cited_chunk_ids} fabricated={answer.fabricated_chunk_ids}")
 
+    if answer.invalid_citation_marker:
+        print(f"FAIL: invalid citation marker: {answer.invalid_citation_marker}")
+        return 1
     if not answer.cited_chunk_ids:
         print("FAIL: the answer carries no citations")
         return 1
