@@ -49,6 +49,7 @@ class _FakeClient:
             tokens_in=1500,
             tokens_out=200,
             cost_gbp=1.6e-3,
+            finish_reason="stop",
         )
 
 
@@ -123,19 +124,21 @@ def test_empty_generation_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
         _compose_with(monkeypatch, "   ")
 
 
-def test_length_truncated_generation_fails_loud_with_recoverable_spend(monkeypatch: pytest.MonkeyPatch) -> None:
-    # finish_reason="length" means the answer was CUT OFF at the output cap —
-    # a truncated figure must never be served as complete, and the raised
-    # error must still carry the accounting for H1-20's error row.
+@pytest.mark.parametrize(
+    "finish_reason", ["length", "content_filter", "tool_calls", "function_call", "unknown", "", None]
+)
+def test_non_stop_generation_fails_with_recoverable_spend(
+    monkeypatch: pytest.MonkeyPatch, finish_reason: str | None
+) -> None:
     class _TruncatingClient:
         def complete(self, *, system: str, prompt: str, max_tokens: int) -> CompletionResult:
             return CompletionResult(
-                text="The top band holds 36.1% of gains and the threshold is £2,0",
+                text="The top band holds most [chunk:9118] and the threshold is £2,0",
                 model="fake-model",
                 tokens_in=1500,
                 tokens_out=900,
                 cost_gbp=3.2e-3,
-                finish_reason="length",
+                finish_reason=finish_reason,  # type: ignore[arg-type]
             )
 
     monkeypatch.setattr(compose, "get_client", lambda: _TruncatingClient())
@@ -168,10 +171,11 @@ def test_citation_format_drift_is_logged_not_silently_dropped(
     with caplog.at_level(logging.WARNING, logger="wealthlens_analyst.answer.compose"):
         answer, _ = _compose_with(monkeypatch, "strict [chunk:9118] but drifted [chunk: 9140] and [CHUNK=9118]")
     assert answer.cited_chunk_ids == [9118]
+    assert answer.invalid_citation_marker == "[chunk: 9140]"
     assert any("format drift" in record.getMessage() for record in caplog.records)
 
 
-def test_impossible_chunk_id_is_dropped_loudly(
+def test_impossible_chunk_id_is_flagged_separately(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # An id beyond BIGINT can never exist and would crash a downstream DB
@@ -179,7 +183,15 @@ def test_impossible_chunk_id_is_dropped_loudly(
     with caplog.at_level(logging.WARNING, logger="wealthlens_analyst.answer.compose"):
         answer, _ = _compose_with(monkeypatch, "real [chunk:9118] fake [chunk:99999999999999999999]")
     assert answer.cited_chunk_ids == [9118]
-    assert any("BIGINT" in record.getMessage() for record in caplog.records)
+    assert answer.fabricated_chunk_ids == []
+    assert answer.invalid_citation_marker == "[chunk:99999999999999999999]"
+    assert caplog.records
+
+
+def test_invalid_citation_signal_is_bounded_without_parsing_huge_integers(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer, _ = _compose_with(monkeypatch, "Real [chunk:9118]. Fake [chunk:" + "9" * 5000 + "].")
+    assert answer.cited_chunk_ids == [9118]
+    assert 0 < len(answer.invalid_citation_marker) <= 128
 
 
 def test_zero_citation_answer_is_flagged_not_silent(

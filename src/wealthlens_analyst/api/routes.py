@@ -48,7 +48,6 @@ from wealthlens_analyst.answer.compose import (
     ComposedAnswer,
     EmptyGenerationError,
     compose_answer,
-    strip_unresolved_citation_markers,
 )
 from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, RefusalResponse
 from wealthlens_analyst.budget.models import QueryDecision, record_query
@@ -431,7 +430,7 @@ def _ask_plain(
         _record_error_best_effort(engine, question, embedded, started, generation=composed, gate_signal=gate.signal)
         raise
 
-    if not resolved.citations or resolved.unresolved_chunk_ids:
+    if not resolved.citations or resolved.unresolved_chunk_ids or composed.invalid_citation_marker:
         # Refuse unless the answer is FULLY cited. Two triggers: the model cited
         # nothing that resolves (its refusal sentence), OR at least one cited id
         # was pruned (fabricated / missing / unknown-source). Serving a partially
@@ -449,11 +448,8 @@ def _ask_plain(
         )
         return RefusalResponse(mode="refusal", question=question, reason=_UNSUPPORTED_REASON)
 
-    # Every cited id resolved. Strip any drift / out-of-range citation-shaped text
-    # the strict parser never counted, so only canonical served-citation markers
-    # remain in the body, then serve.
-    resolved_ids = {citation.chunk_id for citation in resolved.citations}
-    served_text = strip_unresolved_citation_markers(composed.text, resolved_ids).strip()
+    # Every citation-shaped token is canonical, evidence-grounded and resolved.
+    served_text = composed.text.strip()
     _record_or_500(
         engine,
         question=question,
