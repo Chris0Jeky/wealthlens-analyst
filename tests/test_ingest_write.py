@@ -142,7 +142,7 @@ def test_every_rendered_tabular_chunk_passes_the_gate() -> None:
         {"decile": "1st (poorest)", "total_wealth_bn": "13.9"},
         {"decile": "10th (richest)", "total_wealth_bn": "5523.2"},
     ]
-    rendered = render_table_chunks(rows, _WAS)
+    rendered = render_table_chunks(rows, _WAS, access_date=date(2026, 5, 30))
     assert rendered  # guard against a vacuous pass
     for chunk in rendered:
         validate_chunk_provenance(chunk)

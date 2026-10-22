@@ -238,66 +238,44 @@ def test_provenance_from_rows_empty() -> None:
 # ── registry loader (load_source_registry) ────────────────────────────────────
 
 
-def test_load_source_registry_maps_corpus_id_to_name_and_url(tmp_path: Path) -> None:
-    registry_file = tmp_path / "sources.yml"
-    registry_file.write_text(
-        "sources:\n"
-        "  - id: a\n    name: A source\n    url: https://a\n    analyst_corpus: true\n"
-        "  - id: b\n    name: B source\n    url: https://b\n    analyst_corpus: true\n",
+def test_load_source_registry_maps_manifest_id_to_title_and_url(tmp_path: Path) -> None:
+    manifest = tmp_path / "corpus_manifest.yml"
+    manifest.write_text(
+        "documents:\n"
+        "  - source_id: a\n    title: A source\n    url: https://a\n"
+        "  - source_id: b\n    title: B source\n    url: https://b\n    analyst_corpus: false\n",
         encoding="utf-8",
     )
-    assert load_source_registry(registry_file) == {
+    assert load_source_registry(manifest) == {
         "a": SourceMeta("A source", "https://a"),
         "b": SourceMeta("B source", "https://b"),
     }
 
 
-def test_load_source_registry_ignores_non_corpus_sources(tmp_path: Path) -> None:
-    """Only analyst_corpus sources are loaded; a malformed NON-corpus entry does not break the load.
-
-    Decouples the analyst from edits to the many unrelated (dashboard) sources in
-    the shared registry — including a dashboard-only entry left mid-edit with no url.
-    """
-    registry_file = tmp_path / "sources.yml"
-    registry_file.write_text(
-        "sources:\n"
-        "  - id: corpus\n    name: Corpus source\n    url: https://c\n    analyst_corpus: true\n"
-        "  - id: dashboard-only\n    name: Dashboard source\n"  # no url, no analyst_corpus
-        "  - id: other-dashboard\n    name: Other\n    url: https://o\n",  # well-formed, non-corpus
-        encoding="utf-8",
-    )
-    assert load_source_registry(registry_file) == {"corpus": SourceMeta("Corpus source", "https://c")}
-
-
-def test_load_source_registry_fails_on_corpus_entry_missing_url(tmp_path: Path) -> None:
-    registry_file = tmp_path / "sources.yml"
-    registry_file.write_text("sources:\n  - id: a\n    name: A source\n    analyst_corpus: true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="missing id/name/url"):
-        load_source_registry(registry_file)
-
-
-def test_load_source_registry_fails_on_duplicate_corpus_id(tmp_path: Path) -> None:
-    """A repeated corpus id would silently clobber provenance — fail loud instead."""
-    registry_file = tmp_path / "sources.yml"
-    registry_file.write_text(
-        "sources:\n"
-        "  - id: dup\n    name: First\n    url: https://first\n    analyst_corpus: true\n"
-        "  - id: dup\n    name: Second\n    url: https://second\n    analyst_corpus: true\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match="duplicate analyst_corpus source id"):
-        load_source_registry(registry_file)
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[]", "not a YAML mapping"),
+        ("sources: []", "no top-level 'documents' list"),
+        ("documents: [null]", "missing source_id/title/url"),
+        ("documents: [{source_id: a, title: A}]", "missing source_id/title/url"),
+        ("documents: [{source_id: a, title: ' ', url: https://a}]", "missing source_id/title/url"),
+        (
+            "documents:\n"
+            "  - {source_id: dup, title: First, url: https://first}\n"
+            "  - {source_id: dup, title: Second, url: https://second}\n",
+            "duplicate source_id",
+        ),
+    ],
+)
+def test_load_source_registry_rejects_malformed_manifest(tmp_path: Path, text: str, message: str) -> None:
+    manifest = tmp_path / "corpus_manifest.yml"
+    manifest.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_source_registry(manifest)
 
 
-def test_load_source_registry_fails_without_sources_list(tmp_path: Path) -> None:
-    registry_file = tmp_path / "sources.yml"
-    registry_file.write_text("not_sources: true\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="no top-level 'sources' list"):
-        load_source_registry(registry_file)
-
-
-#: The frozen v1 analyst corpus — every source id tagged analyst_corpus: true in
-#: registries/sources.yml. A rename/removal/duplicate of any breaks live citation
+#: The frozen v1 analyst corpus in data/corpus_manifest.yml. A rename/removal/duplicate of any breaks live citation
 #: resolution (resolve_citations strips an uncatalogued source_id as unknown-source).
 #: The corpus is FROZEN until v1 ships, so pin the EXACT set: changing it is a
 #: deliberate act that must update this test.
@@ -314,7 +292,7 @@ _FROZEN_CORPUS_SOURCE_IDS = {
 
 
 def test_default_registry_resolves_every_frozen_corpus_source() -> None:
-    """The real registries/sources.yml carries exactly the frozen-corpus sources, each citable.
+    """The real data/corpus_manifest.yml carries exactly the frozen-corpus sources, each citable.
 
     Reads the committed file (DB-free). Exact-set: catches a corpus source lost to
     a rename/removal AND an unexpected corpus addition; each must resolve to a name
@@ -406,4 +384,26 @@ def test_default_registry_path_honors_repo_root_override(monkeypatch: pytest.Mon
     from wealthlens_analyst.answer.citations import _default_registry_path
 
     monkeypatch.setenv("WEALTHLENS_REPO_ROOT", "/opt/wealthlens")
-    assert _default_registry_path() == Path("/opt/wealthlens") / "registries" / "sources.yml"
+    assert _default_registry_path() == Path("/opt/wealthlens") / "data" / "corpus_manifest.yml"
+
+
+def test_manifest_keeps_frozen_provenance() -> None:
+    from wealthlens_analyst.corpus import load_corpus_manifest
+
+    documents = load_corpus_manifest()
+    assert set(documents) == _FROZEN_CORPUS_SOURCE_IDS
+    for document in documents.values():
+        digest = document["sha256"]
+        assert digest == "PENDING" or (len(digest) == 64 and all(c in "0123456789abcdef" for c in digest))
+        assert document["license"] in {"OGL-3.0", "CC BY-NC-ND 4.0", "CC BY-NC 4.0", "CC BY 4.0"}
+        assert date.fromisoformat(document["retrieval_date"])
+        assert date.fromisoformat(document["access_date"])
+        assert document["update_pattern"]
+        assert document["notes"]
+        assert document["analyst_corpus"] is True
+        if document["format"] == "report":
+            assert document["pdf_url"].startswith("https://")
+            assert document["pipeline"] is None
+        else:
+            assert document["pipeline"].endswith(".py")
+    assert "%252520%2525281%252529" in documents["ifs-r188-inheritances-lifecycle"]["pdf_url"]

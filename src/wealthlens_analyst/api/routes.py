@@ -220,7 +220,7 @@ def get_registry(request: Request) -> Mapping[str, SourceMeta]:
     """Yield the source registry loaded once at startup (app.py's lifespan).
 
     A FastAPI dependency (like get_engine) so plain mode resolves a citation's
-    source name/URL from an in-memory map, never re-reading registries/sources.yml
+    source name/URL from an in-memory map, never re-reading data/corpus_manifest.yml
     per request; tests override it without touching disk.
     """
     registry: Mapping[str, SourceMeta] = request.app.state.registry

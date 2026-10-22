@@ -34,7 +34,7 @@ in its declared stack and no existing search infrastructure.
    Rerank API vs self-hosted BGE) was settled by **ADR 0003** (decided
    2026-06-11: Cohere Rerank 4 Fast — see its decision record).
 4. **Provenance is captured at ingestion time.** Each chunk row carries
-   `source_id` (FK to the registry id in `registries/sources.yml`),
+   `source_id` (FK to the manifest source_id in `data/corpus_manifest.yml`),
    `document_id`, `section`, `page`, and `span`. Citations resolve from these
    columns; nothing is reconstructed at query time.
 5. **One database, one migration tool.** Postgres (pgvector extension) with
