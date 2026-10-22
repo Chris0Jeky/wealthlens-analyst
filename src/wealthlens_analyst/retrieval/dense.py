@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from wealthlens_analyst.config import load_settings
 from wealthlens_analyst.db import EMBEDDING_DIM, embeddings_table, engine_from_settings
-from wealthlens_analyst.llm.client import get_client
+from wealthlens_analyst.llm.client import EmbeddingValidationError, get_client
 
 # Reuse the FTS module's pure provenance->ChunkHit mapper: dense rows carry the
 # identical columns (provenance + a score), and the mapping/ranking it performs is
@@ -121,7 +121,16 @@ def search_dense(query: str, *, limit: int = 50, engine: Engine | None = None) -
     if engine is None:
         engine = engine_from_settings(load_settings())
     try:
-        embedded = get_client().embed([query])
+        try:
+            embedded = get_client().embed([query])
+        except EmbeddingValidationError as exc:
+            logger.warning(
+                "search_dense: query embedding validation failed for %s tokens_in=%d est. cost GBP %.8f",
+                exc.result.model,
+                exc.result.tokens_in,
+                exc.result.cost_gbp,
+            )
+            raise
         logger.info(
             "search_dense: query embedding %s tokens_in=%d est. cost GBP %.8f",
             embedded.model,
@@ -171,7 +180,20 @@ def embed_corpus(*, batch_size: int = 64, engine: Engine | None = None) -> int:
             # network call; then write that batch in its OWN short transaction. A failure
             # part-way leaves earlier batches COMMITTED, and the anti-join above means a
             # re-run resumes from exactly the chunks still unembedded.
-            result = client.embed([row.text for row in batch])
+            try:
+                result = client.embed([row.text for row in batch])
+            except EmbeddingValidationError as exc:
+                total_cost_gbp += exc.result.cost_gbp
+                logger.warning(
+                    "embed_corpus: embedding validation failed for %s tokens_in=%d est. cost GBP %.8f; "
+                    "embedded %d chunk(s); total est. cost GBP %.8f",
+                    exc.result.model,
+                    exc.result.tokens_in,
+                    exc.result.cost_gbp,
+                    embedded,
+                    total_cost_gbp,
+                )
+                raise
             model = result.model
             if len(result.vectors) != len(batch):
                 raise RuntimeError(
