@@ -243,3 +243,18 @@ def test_live_check_fails_when_accounting_write_fails(
     assert harness.provider.calls == ["embed", "complete"]
     assert "FAIL: guarded /ask returned HTTP 500" in capsys.readouterr().out
     assert middleware._in_flight_reserved == 0
+
+
+def test_live_check_fails_if_ask_ever_serves_an_uncited_answer(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Defence in depth: the checks must not rely solely on /ask refusing uncited answers."""
+    harness.provider.text = "A [chunk:9118]."
+    real_validate = harness.check.AnswerResponse.model_validate
+
+    def strip_citations(payload: object) -> object:
+        return real_validate(payload).model_copy(update={"citations": []})
+
+    monkeypatch.setattr(harness.check.AnswerResponse, "model_validate", strip_citations)
+    assert harness.check.main() == 1
+    assert "FAIL: the served answer carries no citations" in capsys.readouterr().out

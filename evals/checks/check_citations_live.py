@@ -80,6 +80,9 @@ def _check_citations(answer: AnswerResponse, engine: Engine, registry: Mapping[s
             f"  [chunk:{citation.chunk_id}] {citation.source_name} ({citation.source_id}) — {loc}"
             f"\n      {citation.url} (accessed {citation.access_date})"
         )
+    if not answer.citations:
+        print("FAIL: the served answer carries no citations")
+        return 1
     if any(not c.source_name or not c.url.startswith("http") for c in answer.citations):
         print("FAIL: a resolved citation is missing a registry source name or URL")
         return 1

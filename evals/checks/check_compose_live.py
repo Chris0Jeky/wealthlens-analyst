@@ -54,6 +54,9 @@ def main() -> int:
     # /ask serves an answer only when all citations resolve to retrieved evidence,
     # including refusal on invalid_citation_marker; it accounts before returning.
     answer = AnswerResponse.model_validate(response.json())
+    if not answer.citations:
+        print("FAIL: the served answer carries no citations")
+        return 1
     print("\n=== ANSWER ===")
     print(answer.answer)
     print(f"cited={[citation.chunk_id for citation in answer.citations]}")
