@@ -50,6 +50,7 @@ from wealthlens_analyst.answer.compose import (
     compose_answer,
 )
 from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, OverBudgetResponse, RefusalResponse
+from wealthlens_analyst.budget.bounds import prompt_fits_bound
 from wealthlens_analyst.budget.middleware import budget_guard
 from wealthlens_analyst.budget.models import QueryDecision, record_query
 from wealthlens_analyst.llm.client import EmbeddingResult, EmbeddingValidationError, get_client
@@ -395,7 +396,9 @@ def _ask_plain(
     # answerable). The gate signal is logged to query_log.gate_signal on every
     # row from here on, so refusal behaviour is auditable / calibratable.
     gate = evaluate_evidence(question, fused)
-    if not gate.answerable:
+    evidence = fused[:_COMPOSE_EVIDENCE_LIMIT]
+    fits_bound = prompt_fits_bound(question, evidence)
+    if not gate.answerable or not fits_bound:
         _record_or_500(
             engine,
             question=question,
@@ -405,11 +408,14 @@ def _ask_plain(
             started=started,
             gate_signal=gate.signal,
         )
-        return RefusalResponse(mode="refusal", question=question, reason=_NO_EVIDENCE_REASON)
+        reason = (
+            _NO_EVIDENCE_REASON if not gate.answerable else "The retrieved evidence exceeds the request cost limit."
+        )
+        return RefusalResponse(mode="refusal", question=question, reason=reason)
 
     composed: ComposedAnswer | None = None
     try:
-        composed = compose_answer(question, fused[:_COMPOSE_EVIDENCE_LIMIT])
+        composed = compose_answer(question, evidence)
         resolved = resolve_citations(composed, engine=engine, registry=registry)
     except EmptyGenerationError as exc:
         # Empty or truncated generation: real spend, unusable text. Record the
@@ -493,10 +499,10 @@ def ask(
     ahead of retrieval.
     """
     started = time.perf_counter()
-    budget_guard(engine, request.question)
-    if debug == "retrieval":
-        return _ask_debug_retrieval(request.question, engine, started)
-    return _ask_plain(request.question, engine, registry, started)
+    with budget_guard(engine, request.question):
+        if debug == "retrieval":
+            return _ask_debug_retrieval(request.question, engine, started)
+        return _ask_plain(request.question, engine, registry, started)
 
 
 @router.get("/metrics/data")
