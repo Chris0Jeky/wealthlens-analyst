@@ -199,6 +199,9 @@ class OpenAIClient:
         Validate indices and finite vector dimensions before returning any results.
         Vectors are sorted into input order; malformed responses raise ValueError.
         """
+        # Match complete(): reject an unpriced model before a paid call can
+        # produce spend that the accounting path cannot report.
+        embedding_cost_gbp(self._embedding_model, 0)
         import openai
 
         client = openai.OpenAI(api_key=self._api_key)
@@ -246,6 +249,7 @@ def get_client() -> LLMClient:
         raise RuntimeError("OPENAI_API_KEY is not configured (see .env.example); cannot reach the model provider")
     if not settings.embedding_model:
         raise RuntimeError("EMBEDDING_MODEL is not configured (see .env.example)")
+    embedding_cost_gbp(settings.embedding_model, 0)
     if settings.analyst_model:
         # A CONFIGURED-but-unpriced generation model should kill the app at
         # startup (the api lifespan calls get_client), not burn unaccountable

@@ -34,6 +34,25 @@ def test_embedding_cost_unknown_model_fails_loud() -> None:
         embedding_cost_gbp("text-embedding-9-imaginary", 100)
 
 
+def test_embed_unpriced_model_fails_before_any_spend(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _install_fake_openai(monkeypatch, prompt_tokens=7)
+    client = OpenAIClient(api_key="sk-x", embedding_model="text-embedding-9-imaginary", analyst_model="")
+
+    with pytest.raises(ValueError, match="no price configured for embedding model"):
+        client.embed(["alpha", "beta"])
+
+    assert "model" not in captured
+
+
+def test_get_client_rejects_unpriced_embedding_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-9-imaginary")
+    monkeypatch.setenv("ANALYST_MODEL", "")
+
+    with pytest.raises(ValueError, match="no price configured for embedding model"):
+        get_client()
+
+
 def _install_fake_openai(
     monkeypatch: pytest.MonkeyPatch,
     *,
