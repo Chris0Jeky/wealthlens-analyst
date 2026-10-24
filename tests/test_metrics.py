@@ -360,7 +360,7 @@ def test_postgres_aggregates_in_one_select_with_transaction_local_timeout(engine
     assert read_monthly_metrics(engine, now=_NOW)[2].total_queries == 1
     selects = [statement for statement in statements if statement.startswith("SELECT")]
     assert len(selects) == 1
-    assert selects[0].count("percentile_disc") == 4
+    assert selects[0].count("percentile_disc(") == 4  # bound-parameter names also contain the word
     assert "SET LOCAL statement_timeout = '2s'" in statements
     assert timeouts == ["2s"]
 
