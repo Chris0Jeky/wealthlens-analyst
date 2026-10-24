@@ -518,7 +518,9 @@ def metrics_data(engine: Annotated[Engine, Depends(get_engine)]) -> MetricsRespo
     """Serve current UTC month metrics. Free, cap-exempt, with no model calls or writes.
 
     See MetricsResponse for the stable keys, populations and percentile rules.
-    Database failures return 503, like /healthz.
+    Results are cached in process for 30 seconds per engine/UTC month; writes
+    may take that long to appear. Postgres reads have a local 2s statement timeout.
+    Database failures on refresh return 503, like /healthz.
     """
     try:
         start, end, summary = read_monthly_metrics(engine)
