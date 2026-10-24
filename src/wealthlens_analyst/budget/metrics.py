@@ -26,8 +26,8 @@ from time import monotonic
 from weakref import WeakKeyDictionary
 
 import sqlalchemy as sa
-from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy import Connection, Engine
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 
 from wealthlens_analyst.budget.models import QueryDecision
 
