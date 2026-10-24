@@ -34,7 +34,7 @@ class ChunkHit:
     """
 
     chunk_id: int
-    source_id: str  # registry id in registries/sources.yml
+    source_id: str  # registry id in data/corpus_manifest.yml
     document_id: str
     section: str | None
     page: int | None

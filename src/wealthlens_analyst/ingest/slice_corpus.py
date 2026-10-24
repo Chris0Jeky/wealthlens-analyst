@@ -11,7 +11,7 @@ Two ingestion paths, one provenance contract (ADR 0001 §4):
    extraction, ~500-token heading-anchored chunks with page + span recorded.
    Pending task H1-08.
 
-Every chunk row carries source_id (registries/sources.yml id), document_id,
+Every chunk row carries source_id (data/corpus_manifest.yml id), document_id,
 section, page, span. The per-type rule (tabular: section + span, no page;
 document: page + span) is enforced at write time (task H1-09); the renderers
 here always emit conformant chunks.
@@ -56,7 +56,6 @@ from __future__ import annotations
 import csv
 import logging
 import math
-import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
@@ -66,6 +65,7 @@ import sqlalchemy as sa
 from sqlalchemy import Engine
 
 from wealthlens_analyst.config import load_settings
+from wealthlens_analyst.corpus import default_manifest_path, load_corpus_manifest
 from wealthlens_analyst.db import chunks_table, engine_from_settings
 from wealthlens_analyst.retrieval.dense import embed_corpus
 
@@ -85,7 +85,7 @@ class Chunk:
     that targets ~500-token chunks introduces a real tokenizer for that column.
     """
 
-    source_id: str  # registries/sources.yml id — the citation root
+    source_id: str  # data/corpus_manifest.yml id — the citation root
     document_id: str  # stable id of the table/document within the source
     section: str | None
     page: int | None
@@ -162,9 +162,6 @@ class TableSpec:
     section_column: str  # the column whose value names each band/section
     section_noun: str  # what a band is, e.g. "wealth decile", "size-of-gain band"
     value_columns: tuple[ValueColumn, ...]
-    # access_date mirrors registries/sources.yml; H1-09 will load it from the
-    # registry directly (the analyst has no YAML dep yet — see ADR 0001).
-    access_date: date
     # Honesty filter (ALLOWLIST, fail-closed). If set, a row is ingested only
     # when row[honesty_flag_column].strip().lower() is in official_markers;
     # everything else (illustrative/unknown/blank/missing) is skipped. None means
@@ -189,8 +186,8 @@ class TableSpec:
             raise ValueError(f"TableSpec {self.source_id!r}: cumulative rendering requires band_lower_column")
 
 
-# The frozen tabular slice: the analyst_corpus tabular sources in
-# registries/sources.yml, each mapped to its existing processed pipeline output.
+# Rendering configuration for the frozen tabular sources in
+# data/corpus_manifest.yml, each mapped to its existing processed pipeline output.
 TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec(
         source_id="ons-was-wealth",
@@ -201,7 +198,6 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
         section_column="decile",
         section_noun="wealth decile",
         value_columns=(ValueColumn("total_wealth_bn", "aggregate total net wealth", prefix="£", suffix="bn"),),
-        access_date=date(2026, 5, 30),  # registries/sources.yml: ons-was-wealth
     ),
     TableSpec(
         source_id="hmrc-cgt-statistics",
@@ -223,7 +219,6 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             ValueColumn("share_of_gains_pct", "share of all taxable gains in this band", suffix="%"),
             ValueColumn("share_of_taxpayers_pct", "share of all CGT taxpayers in this band", suffix="%"),
         ),
-        access_date=date(2026, 5, 16),  # registries/sources.yml: hmrc-cgt-statistics
         # Explicit band ranges + a cumulative-from-the-top concentration clause.
         # cumul_*_from_top_pct are cumulative sums of the 1-dp per-band shares, so
         # the low bands round to ~100.1/100.6%; the CumulativeSpec clamp absorbs
@@ -260,7 +255,6 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
             ValueColumn("iht_bn", "Inheritance Tax receipts", prefix="£", suffix="bn"),
             ValueColumn("sdlt_bn", "Stamp Duty Land Tax receipts", prefix="£", suffix="bn"),
         ),
-        access_date=date(2026, 5, 16),  # registries/sources.yml: hmrc-tax-receipts
         # The dashboard pipeline emits data_source="live" for real receipts and
         # "illustrative"/"unknown" for the fallback; only "live" is ingested.
         honesty_flag_column="data_source",
@@ -411,9 +405,10 @@ def _cumulative_clause(row: Mapping[str, str], spec: TableSpec, bound: float | N
     return f" Cumulatively, {spec.cumulative.subject} {threshold} and above {_join_clauses(parts)}."
 
 
-def render_table_chunks(rows: Iterable[Mapping[str, str]], spec: TableSpec) -> list[Chunk]:
+def render_table_chunks(rows: Iterable[Mapping[str, str]], spec: TableSpec, *, access_date: date) -> list[Chunk]:
     """Render one processed tabular source into citable chunks (one per band).
 
+    ``access_date`` is the manifest retrieval_date supplied by the reader.
     Each chunk's text states the table, the period, the band, and every
     available statistic with its units. Missing cells are omitted (never
     fabricated as 0); rows that are not from a known-official data_source are
@@ -484,7 +479,7 @@ def render_table_chunks(rows: Iterable[Mapping[str, str]], spec: TableSpec) -> l
                 span=span,
                 text=text,
                 token_count=len(text.split()),
-                access_date=spec.access_date,
+                access_date=access_date,
             )
         )
 
@@ -500,22 +495,8 @@ def render_table_chunks(rows: Iterable[Mapping[str, str]], spec: TableSpec) -> l
 
 
 def _find_repo_root() -> Path:
-    """Locate the repo root (the dir holding registries/sources.yml).
-
-    WEALTHLENS_REPO_ROOT overrides the search, for non-editable installs where
-    the package no longer sits inside the checked-out tree. Otherwise we walk up
-    from this module (reliable under the editable install, same approach as the
-    sim registry loaders).
-    """
-    override = os.environ.get("WEALTHLENS_REPO_ROOT")
-    if override:
-        return Path(override)
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "registries" / "sources.yml").is_file():
-            return parent
-    raise RuntimeError(
-        "could not locate repo root (no ancestor holds registries/sources.yml); set WEALTHLENS_REPO_ROOT to override"
-    )
+    """Locate the repo root using the same manifest path as citation resolution."""
+    return default_manifest_path().parents[1]
 
 
 def collect_tabular_chunks(processed_dir: Path | None = None) -> list[Chunk]:
@@ -530,6 +511,7 @@ def collect_tabular_chunks(processed_dir: Path | None = None) -> list[Chunk]:
     if processed_dir is None:
         processed_dir = _processed_dir_default()
 
+    documents = load_corpus_manifest()
     chunks: list[Chunk] = []
     for spec in TABLE_SPECS:
         csv_path = processed_dir / spec.csv_name
@@ -542,7 +524,9 @@ def collect_tabular_chunks(processed_dir: Path | None = None) -> list[Chunk]:
             continue
         with csv_path.open(newline="", encoding="utf-8-sig") as handle:
             rows = list(csv.DictReader(handle))
-        rendered = render_table_chunks(rows, spec)
+        entry = documents[spec.source_id]
+        access_date = date.fromisoformat(str(entry["retrieval_date"]))
+        rendered = render_table_chunks(rows, spec, access_date=access_date)
         logger.info("tabular source %s: %d chunk(s) from %d row(s)", spec.source_id, len(rendered), len(rows))
         chunks.extend(rendered)
     return chunks

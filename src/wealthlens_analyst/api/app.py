@@ -44,7 +44,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     load_source_registry fails loudly on a malformed/duplicated corpus source
     (plain mode resolves every citation's source name/URL through it). The
     registry is loaded ONCE here and injected via get_registry, so no /ask
-    re-reads sources.yml from disk. None of these open a connection or spend
+    re-reads corpus_manifest.yml from disk. None of these open a connection or spend
     anything — get_client's result is discarded; SQLAlchemy pools lazily, so
     /healthz is the first thing that actually touches the database.
     """

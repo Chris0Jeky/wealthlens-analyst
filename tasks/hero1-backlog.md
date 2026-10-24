@@ -81,5 +81,5 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 
 ## Standalone-repo follow-ups (seeded by the 2026-07-06 extraction)
 
-- [ ] H1-33 (M5) Migrate corpus identity from `registries/sources.yml` to `data/corpus_manifest.yml`: `load_source_registry` and the slice ingest read the manifest (sha256 + retrieval_date recorded by `scripts/fetch_corpus.py`), then the trimmed registry copy retires — done when the suite passes with `registries/` deleted. [deps: —]
+- [x] H1-33 (M5) Migrate corpus identity from `registries/sources.yml` to `data/corpus_manifest.yml`: `load_source_registry` and the slice ingest read the manifest (sha256 + retrieval_date recorded by `scripts/fetch_corpus.py`), then the trimmed registry copy retires — done when the suite passes with `registries/` deleted. [deps: —]
 - [ ] H1-34 (M6) Self-contained corpus acquisition: `scripts/fetch_corpus.py` covers every manifest entry (record the PENDING sha256s on first fetch) and the tabular CSVs are produced or vendored with provenance in-repo, removing the upstream wealthlens-hq pipeline dependency — done when `make fetch-corpus && make ingest-slice` works from a fresh clone against an empty database. [deps: H1-33]
