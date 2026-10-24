@@ -9,6 +9,8 @@ in a PR description. It needs the local analyst-db (ingested corpus) reachable
 via DATABASE_URL and a real OPENAI_API_KEY in the environment, and it SPENDS:
 one query embedding + one gpt-5.4-mini generation (well under a penny at the
 verified prices in llm/client.py).
+The in-process /ask request uses the configured database, budget reservation
+and query_log accounting. The fabricated-citation probe makes no model call.
 
 Usage:
     python evals/checks/check_citations_live.py ["your question"]
@@ -21,15 +23,17 @@ loud, never skip silently).
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import sys
+from collections.abc import Mapping
 
-from wealthlens_analyst.answer.citations import resolve_citations
-from wealthlens_analyst.answer.compose import compose_answer
-from wealthlens_analyst.retrieval.dense import search_dense
-from wealthlens_analyst.retrieval.fts import search_fts
-from wealthlens_analyst.retrieval.fuse_rrf import fuse_rrf
+from fastapi.testclient import TestClient
+from sqlalchemy import Engine
+
+from wealthlens_analyst.answer.citations import SourceMeta, resolve_citations
+from wealthlens_analyst.answer.compose import ComposedAnswer
+from wealthlens_analyst.api.app import create_app
+from wealthlens_analyst.api.schemas import AnswerResponse
 
 _DEFAULT_QUESTION = (
     "Which size-of-gain band accounts for the largest share of capital gains, "
@@ -44,56 +48,52 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     question = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_QUESTION
 
-    lexical = search_fts(question)
-    dense = search_dense(question)
-    fused = fuse_rrf(lexical, dense)
-    print(f"retrieved: fts={len(lexical)} dense={len(dense)} fused={len(fused)}")
-    if not fused:
-        print("FAIL: retrieval returned no candidates (is the corpus ingested?)")
-        return 1
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/ask", json={"question": question})
+        if response.status_code == 429:
+            print("FAIL: over_budget: budget guard refused before any provider call")
+            return 1
+        if response.status_code != 200:
+            print(f"FAIL: guarded /ask returned HTTP {response.status_code}")
+            return 1
+        if response.json()["mode"] != "answer":
+            print(f"FAIL: /ask refused: {response.json()['reason']}")
+            return 1
+        answer = AnswerResponse.model_validate(response.json())
+        return _check_citations(answer, app.state.engine, app.state.registry)
 
-    answer = compose_answer(question, fused)
+
+def _check_citations(answer: AnswerResponse, engine: Engine, registry: Mapping[str, SourceMeta]) -> int:
+    """Inspect the accounted answer and run a free fabricated-citation probe."""
     print("\n=== ANSWER ===")
-    print(answer.text)
-    print(f"\ncited={answer.cited_chunk_ids} fabricated={answer.fabricated_chunk_ids}")
-    if answer.invalid_citation_marker:
-        print(f"FAIL: invalid citation marker: {answer.invalid_citation_marker}")
-        return 1
-    if not answer.cited_chunk_ids:
-        print("FAIL: the answer carries no citations to resolve")
-        return 1
+    print(answer.answer)
+    print(f"\ncited={[citation.chunk_id for citation in answer.citations]}")
+    print("accounting: embedding + generation recorded in query_log by /ask")
 
-    # (a) The real answer's citations resolve to full provenance.
-    resolved = resolve_citations(answer)
+    # (a) /ask has resolved the real answer's citations to full provenance.
+    # It also refuses invalid_citation_marker before serving any answer.
     print("\n=== RESOLVED CITATIONS ===")
-    for citation in resolved.citations:
+    for citation in answer.citations:
         loc = f"page {citation.page}" if citation.page is not None else (citation.section or "-")
         print(
             f"  [chunk:{citation.chunk_id}] {citation.source_name} ({citation.source_id}) — {loc}"
             f"\n      {citation.url} (accessed {citation.access_date})"
         )
-    if resolved.unresolved_chunk_ids:
-        print(f"unresolved (unexpected for the clean answer): {resolved.unresolved_chunk_ids}")
-
-    non_fabricated = [cid for cid in answer.cited_chunk_ids if cid not in answer.fabricated_chunk_ids]
-    resolved_ids = [c.chunk_id for c in resolved.citations]
-    if not resolved.citations:
-        print("FAIL: no citation resolved")
+    if not answer.citations:
+        print("FAIL: the served answer carries no citations")
         return 1
-    if resolved_ids != non_fabricated:
-        print(f"FAIL: resolved ids {resolved_ids} != evidence-grounded cited ids {non_fabricated}")
-        return 1
-    if any(not c.source_name or not c.url.startswith("http") for c in resolved.citations):
+    if any(not c.source_name or not c.url.startswith("http") for c in answer.citations):
         print("FAIL: a resolved citation is missing a registry source name or URL")
         return 1
 
     # (b) A fabricated citation is caught and stripped.
-    tampered = dataclasses.replace(
-        answer,
-        cited_chunk_ids=[*answer.cited_chunk_ids, _FABRICATED_ID],
-        fabricated_chunk_ids=[*answer.fabricated_chunk_ids, _FABRICATED_ID],
+    tampered = ComposedAnswer(
+        text=answer.answer,
+        cited_chunk_ids=[*[c.chunk_id for c in answer.citations], _FABRICATED_ID],
+        fabricated_chunk_ids=[_FABRICATED_ID],
     )
-    tampered_resolved = resolve_citations(tampered)
+    tampered_resolved = resolve_citations(tampered, engine=engine, registry=registry)
     if _FABRICATED_ID in [c.chunk_id for c in tampered_resolved.citations]:
         print(f"FAIL: fabricated id {_FABRICATED_ID} was served as a citation")
         return 1
