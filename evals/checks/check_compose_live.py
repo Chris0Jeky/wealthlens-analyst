@@ -9,6 +9,8 @@ it SPENDS: one query embedding + one gpt-5.4-mini generation (well under a
 penny at the verified prices in llm/client.py).
 The in-process /ask request uses the configured database, budget reservation
 and query_log accounting; a budget refusal fails before any provider call.
+The check captures the exact evidence passed to composition during that request
+and independently checks citation membership, without a second retrieval call.
 
 Usage:
     python evals/checks/check_compose_live.py ["your question"]
@@ -23,11 +25,15 @@ from __future__ import annotations
 
 import logging
 import sys
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from wealthlens_analyst.answer.compose import ComposedAnswer, compose_answer
+from wealthlens_analyst.api import routes
 from wealthlens_analyst.api.app import create_app
 from wealthlens_analyst.api.schemas import AnswerResponse
+from wealthlens_analyst.retrieval.fts import ChunkHit
 
 _DEFAULT_QUESTION = (
     "Which size-of-gain band accounts for the largest share of capital gains, "
@@ -38,8 +44,17 @@ _DEFAULT_QUESTION = (
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     question = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_QUESTION
+    evidence_ids: set[int] = set()
 
-    with TestClient(create_app(), raise_server_exceptions=False) as client:
+    def capture_evidence(question: str, evidence: list[ChunkHit]) -> ComposedAnswer:
+        nonlocal evidence_ids
+        evidence_ids = {hit.chunk_id for hit in evidence}
+        return compose_answer(question, evidence)
+
+    with (
+        patch.object(routes, "compose_answer", capture_evidence),
+        TestClient(create_app(), raise_server_exceptions=False) as client,
+    ):
         response = client.post("/ask", json={"question": question})
     if response.status_code == 429:
         print("FAIL: over_budget: budget guard refused before any provider call")
@@ -51,11 +66,13 @@ def main() -> int:
         print(f"FAIL: /ask refused: {response.json()['reason']}")
         return 1
 
-    # /ask serves an answer only when all citations resolve to retrieved evidence,
-    # including refusal on invalid_citation_marker; it accounts before returning.
     answer = AnswerResponse.model_validate(response.json())
     if not answer.citations:
         print("FAIL: the served answer carries no citations")
+        return 1
+    unsupported = sorted({citation.chunk_id for citation in answer.citations} - evidence_ids)
+    if unsupported:
+        print(f"FAIL: citations outside the generation evidence: {unsupported}")
         return 1
     print("\n=== ANSWER ===")
     print(answer.answer)
