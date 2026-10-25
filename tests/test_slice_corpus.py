@@ -43,7 +43,7 @@ def test_was_chunk_format_is_locked() -> None:
         {"decile": "1st (poorest)", "total_wealth_bn": "13.9"},
         {"decile": "10th (richest)", "total_wealth_bn": "5523.2"},  # matches the real CSV
     ]
-    chunks = render_table_chunks(rows, _WAS)
+    chunks = render_table_chunks(rows, _WAS, access_date=date(2026, 5, 30))
 
     assert len(chunks) == 2
     first = chunks[0]
@@ -71,7 +71,7 @@ def test_tabular_provenance_invariants_hold_for_every_chunk() -> None:
         {"decile": "5th", "total_wealth_bn": "652.0"},
         {"decile": "6th", "total_wealth_bn": "955.2"},
     ]
-    for chunk in render_table_chunks(rows, _WAS):
+    for chunk in render_table_chunks(rows, _WAS, access_date=date(2026, 5, 30)):
         assert chunk.source_id
         assert chunk.document_id
         assert chunk.section  # non-empty
@@ -96,7 +96,7 @@ def test_suppressed_cell_is_omitted_not_fabricated() -> None:
             "share_of_taxpayers_pct": "",  # suppressed
         }
     ]
-    (chunk,) = render_table_chunks(rows, _CGT)
+    (chunk,) = render_table_chunks(rows, _CGT, access_date=date(2026, 5, 16))
 
     # Present figures appear (genuine zero preserved as "0%").
     assert "total gains in this band £1m" in chunk.text
@@ -120,7 +120,7 @@ def test_cgt_without_band_lower_falls_back_to_raw_label() -> None:
             "share_of_taxpayers_pct": "17.0",
         }
     ]
-    (chunk,) = render_table_chunks(rows, _CGT)
+    (chunk,) = render_table_chunks(rows, _CGT, access_date=date(2026, 5, 16))
     assert "Size-of-gain band £6,000+:" in chunk.text
     assert "share of all taxable gains in this band 0.7%" in chunk.text
     assert "taxpayers with gains in this band 61 thousand" in chunk.text
@@ -137,7 +137,7 @@ def test_row_with_every_value_missing_yields_no_chunk() -> None:
             "share_of_taxpayers_pct": "",
         }
     ]
-    assert render_table_chunks(rows, _CGT) == []
+    assert render_table_chunks(rows, _CGT, access_date=date(2026, 5, 16)) == []
 
 
 def test_blank_band_label_is_skipped() -> None:
@@ -147,7 +147,7 @@ def test_blank_band_label_is_skipped() -> None:
         {"decile": "   ", "total_wealth_bn": "2.0"},
         {"decile": "1st (poorest)", "total_wealth_bn": "13.9"},
     ]
-    chunks = render_table_chunks(rows, _WAS)
+    chunks = render_table_chunks(rows, _WAS, access_date=date(2026, 5, 30))
     assert len(chunks) == 1
     assert chunks[0].span == "decile=1st (poorest)"
 
@@ -158,7 +158,7 @@ def test_span_is_disambiguated_on_duplicate_band_label() -> None:
         {"decile": "5th", "total_wealth_bn": "1.0"},
         {"decile": "5th", "total_wealth_bn": "2.0"},
     ]
-    chunks = render_table_chunks(rows, _WAS)
+    chunks = render_table_chunks(rows, _WAS, access_date=date(2026, 5, 30))
     spans = [c.span for c in chunks]
     assert spans == ["decile=5th", "decile=5th#2"]
     assert len(set(spans)) == len(spans)
@@ -180,7 +180,7 @@ def test_honesty_filter_is_a_fail_closed_allowlist() -> None:
         {"year": "2020-21", **base, "data_source": ""},  # blank -> skipped
         {"year": "2019-20", **base},  # missing column -> skipped
     ]
-    chunks = render_table_chunks(rows, _RECEIPTS)
+    chunks = render_table_chunks(rows, _RECEIPTS, access_date=date(2026, 5, 16))
 
     assert len(chunks) == 1
     assert chunks[0].span == "year=2023-24"
@@ -201,7 +201,7 @@ def test_real_tax_composition_is_all_illustrative_today() -> None:
         {"year": "2018-19", "income_tax_bn": "191.0", "data_source": "illustrative"},
         {"year": "2023-24", "income_tax_bn": "270.0", "data_source": "illustrative"},
     ]
-    assert render_table_chunks(rows, _RECEIPTS) == []
+    assert render_table_chunks(rows, _RECEIPTS, access_date=date(2026, 5, 16)) == []
 
 
 def test_clean_number_formatting_and_missing() -> None:
@@ -244,7 +244,6 @@ def test_table_specs_are_wellformed() -> None:
         assert spec.csv_name.endswith(".csv")
         assert spec.value_columns  # at least one statistic to render
         assert spec.section_column
-        assert isinstance(spec.access_date, date)
         # A table with an honesty flag must define a non-empty official allowlist.
         if spec.honesty_flag_column is not None:
             assert spec.official_markers
@@ -305,7 +304,7 @@ _CGT_TOP_BANDS = [
 
 def test_cgt_renders_explicit_band_ranges() -> None:
     """A '£X+' band is rendered as a half-open range (top band: 'and above')."""
-    chunks = {c.span: c for c in render_table_chunks(_CGT_TOP_BANDS, _CGT)}
+    chunks = {c.span: c for c in render_table_chunks(_CGT_TOP_BANDS, _CGT, access_date=date(2026, 5, 16))}
 
     # Middle bands read as [lower, next-lower) -> "to under"; span still pins the
     # RAW HMRC label; per-band figures stay scoped "in this band".
@@ -329,7 +328,7 @@ def test_cgt_cumulative_concentration_clause_serves_g008() -> None:
     gains share and the headcount share each read with correct grammar (never
     "gains ... account for ... taxpayers").
     """
-    chunks = {c.span: c for c in render_table_chunks(_CGT_TOP_BANDS, _CGT)}
+    chunks = {c.span: c for c in render_table_chunks(_CGT_TOP_BANDS, _CGT, access_date=date(2026, 5, 16))}
 
     assert (
         "Cumulatively, taxpayers with gains of £1,000,000 and above "
@@ -362,7 +361,7 @@ def test_cgt_cumulative_rounding_overflow_clamped_and_suppressed_omitted() -> No
             "cumul_taxpayers_from_top_pct": "",
         },
     ]
-    chunks = {c.span: c for c in render_table_chunks(rows, _CGT)}
+    chunks = {c.span: c for c in render_table_chunks(rows, _CGT, access_date=date(2026, 5, 16))}
 
     # Both overshoots clamp to exactly 100% (no fabricated 100.1).
     assert (
@@ -416,6 +415,49 @@ def test_cumulative_spec_requires_a_band_lower_column() -> None:
             section_column="band",
             section_noun="band",
             value_columns=(ValueColumn("v", "label"),),
-            access_date=date(2026, 1, 1),
             cumulative=CumulativeSpec(subject="x of", columns=(CumulativeColumn("c", "did", "of all x"),)),
         )
+
+
+@pytest.mark.parametrize("retrieval_date", ["2026-10-01", "2026-10-02", "invalid", None])
+def test_collect_reads_manifest_provenance_and_root_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retrieval_date: str | None
+) -> None:
+    """A manifest-only tree supplies both identity and the current retrieval date."""
+    import yaml
+
+    from wealthlens_analyst.answer.citations import load_source_registry
+    from wealthlens_analyst.ingest.slice_corpus import _find_repo_root
+
+    data = tmp_path / "data"
+    processed = data / "processed"
+    processed.mkdir(parents=True)
+    (processed / "ons_wealth_by_decile.csv").write_text("decile,total_wealth_bn\n1st,13.9\n", encoding="utf-8")
+    (data / "corpus_manifest.yml").write_text(
+        yaml.safe_dump(
+            {
+                "documents": [
+                    {
+                        "source_id": "ons-was-wealth",
+                        "title": "Manifest title",
+                        "url": "https://example.test/was",
+                        "retrieval_date": retrieval_date,
+                        "access_date": "2000-01-01",
+                        "sha256": "PENDING",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WEALTHLENS_REPO_ROOT", str(tmp_path))
+    assert _find_repo_root() == tmp_path
+    assert load_source_registry()["ons-was-wealth"].name == "Manifest title"
+    if retrieval_date in ("invalid", None):
+        with pytest.raises(ValueError):
+            collect_tabular_chunks()
+        return
+    (chunk,) = collect_tabular_chunks()
+    assert chunk.source_id == "ons-was-wealth"
+    assert chunk.access_date == date.fromisoformat(retrieval_date)
+    assert not (tmp_path / "registries").exists()

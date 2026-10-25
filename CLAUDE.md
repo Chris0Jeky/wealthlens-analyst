@@ -75,7 +75,7 @@ src/wealthlens_analyst/
   budget/      models.py middleware.py (H1-27 stub)                    ADR 0002
   api/         app.py routes.py schemas.py  → /ask /healthz /metrics/data(H1-29 stub)
   ingest/      slice_corpus.py fetch_documents.py
-migrations/ evals/{golden,checks,run_ragas.py} registries/sources.yml data/corpus_manifest.yml
+migrations/ evals/{golden,checks,run_ragas.py} data/corpus_manifest.yml
 docs/plan/HERO1_PLAN.md · docs/adr/0001-0003 · tasks/hero1-backlog.md · tests/
 ```
 
@@ -101,7 +101,7 @@ green. Pin the stub you are about to fill before you fill it.
   methods. It is still a **denylist of three vendor names**: a fourth provider's SDK passes it
   silently, so reading the diff, not the grep, is what actually holds the metering seam.
 - **Never add a corpus source** before its live URL exists; corpus identity lives in
-  `registries/sources.yml` + `data/corpus_manifest.yml` and is frozen until v1 ships.
+  `data/corpus_manifest.yml` and is frozen until v1 ships.
 - **Never skip the metering path** — every model call is accounted; a served outcome whose
   `query_log` row cannot be written must 500, not serve unmetered spend.
 - Embedding dimension **1536 is baked into migration `0002_embeddings`**; pointing

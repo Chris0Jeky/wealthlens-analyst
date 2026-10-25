@@ -99,8 +99,7 @@ test.
 
 ## Corpus and licensing
 
-The corpus is a **frozen 8-source slice** (`registries/sources.yml`,
-`data/corpus_manifest.yml`); adding a source before the live URL exists is
+The corpus is a **frozen 8-source slice** (`data/corpus_manifest.yml`); adding a source before the live URL exists is
 forbidden by the locked plan. ONS and HMRC statistics are used under the
 [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/);
 IFS and Resolution Foundation reports carry their publishers' CC licences
