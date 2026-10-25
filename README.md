@@ -78,10 +78,28 @@ Note: the tabular corpus CSVs are currently produced by the upstream
 self-contained fetch is a seeded follow-up (`tasks/hero1-backlog.md`,
 standalone-repo section).
 
+The suite runs offline with SQLite; Postgres budget cases skip unless
+`WEALTHLENS_TEST_DATABASE_URL` is set. To run them against the real migrations
+locally (no API key or model calls required):
+
+```bash
+docker compose up -d --wait analyst-db
+# Use the local-dev DATABASE_URL from alembic.ini (localhost:15432/analyst).
+export DATABASE_URL='postgresql+psycopg://wealthlens:wealthlens@localhost:15432/analyst'
+python -m alembic upgrade head
+export WEALTHLENS_TEST_DATABASE_URL="$DATABASE_URL"
+python -m pytest -q -rs
+docker compose down
+```
+
+Use a development/test database: each Postgres test rolls back its table changes,
+including the frozen accounting timestamp default. CI runs the same migrations
+with `pgvector/pgvector:pg17` (tag-pinned, matching compose) and fails on any skipped
+test.
+
 ## Corpus and licensing
 
-The corpus is a **frozen 8-source slice** (`registries/sources.yml`,
-`data/corpus_manifest.yml`); adding a source before the live URL exists is
+The corpus is a **frozen 8-source slice** (`data/corpus_manifest.yml`); adding a source before the live URL exists is
 forbidden by the locked plan. ONS and HMRC statistics are used under the
 [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/);
 IFS and Resolution Foundation reports carry their publishers' CC licences

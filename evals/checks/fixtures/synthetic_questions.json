@@ -1,0 +1,8 @@
+{
+  "description": "SYNTHETIC checker inputs only. REVIEWED/DRAFT simulate status branches, not human review. No golden expected answers or required citations.",
+  "questions": [
+    {"id": "SYN-ANSWER", "question": "Synthetic supported question?", "category": "in_corpus", "expected_behaviour": "answer", "status": "REVIEWED"},
+    {"id": "SYN-REFUSE", "question": "Synthetic unsupported question?", "category": "out_of_corpus", "expected_behaviour": "refuse", "status": "REVIEWED"},
+    {"id": "SYN-DRAFT", "question": "Synthetic unreviewed question?", "category": "in_corpus", "expected_behaviour": "answer", "status": "DRAFT"}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recorded guarded /ask responses (version 1)",
+  "description": "Offline observations, not golden answers. Future --live recording must use guarded POST /ask and query_log total embedding + generation cost. Each response separately validates against api/schemas.py and ask_response.schema.json. All REVIEWED question ids must be present exactly once. DRAFT modes are not scored. synthetic=true is reserved for smoke fixtures, never golden scoring. STUB inclusive bounds default to 120000 ms and GBP 1 per request, configurable via --max-latency-ms and --max-cost-gbp; not calibrated service targets or spend enforcement.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format_version", "synthetic", "records"],
+  "properties": {
+    "format_version": {"const": 1},
+    "synthetic": {"type": "boolean"},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question_id", "response", "latency_ms", "cost_gbp"],
+        "properties": {
+          "question_id": {"type": "string", "minLength": 1},
+          "response": {"type": "object"},
+          "latency_ms": {"type": "number", "minimum": 0},
+          "cost_gbp": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}

@@ -7,6 +7,8 @@ does not live only in a PR description. It needs the local analyst-db
 (:15432, ingested corpus) and a real OPENAI_API_KEY in the environment, and
 it SPENDS: one query embedding + one gpt-5.4-mini generation (well under a
 penny at the verified prices in llm/client.py).
+The in-process /ask request uses the configured database, budget reservation
+and query_log accounting; a budget refusal fails before any provider call.
 
 Usage:
     python evals/checks/check_compose_live.py ["your question"]
@@ -22,10 +24,10 @@ from __future__ import annotations
 import logging
 import sys
 
-from wealthlens_analyst.answer.compose import compose_answer
-from wealthlens_analyst.retrieval.dense import search_dense
-from wealthlens_analyst.retrieval.fts import search_fts
-from wealthlens_analyst.retrieval.fuse_rrf import fuse_rrf
+from fastapi.testclient import TestClient
+
+from wealthlens_analyst.api.app import create_app
+from wealthlens_analyst.api.schemas import AnswerResponse
 
 _DEFAULT_QUESTION = (
     "Which size-of-gain band accounts for the largest share of capital gains, "
@@ -37,30 +39,28 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     question = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_QUESTION
 
-    lexical = search_fts(question)
-    dense = search_dense(question)
-    fused = fuse_rrf(lexical, dense)
-    print(f"retrieved: fts={len(lexical)} dense={len(dense)} fused={len(fused)}")
-    if not fused:
-        print("FAIL: retrieval returned no candidates (is the corpus ingested?)")
+    with TestClient(create_app(), raise_server_exceptions=False) as client:
+        response = client.post("/ask", json={"question": question})
+    if response.status_code == 429:
+        print("FAIL: over_budget: budget guard refused before any provider call")
+        return 1
+    if response.status_code != 200:
+        print(f"FAIL: guarded /ask returned HTTP {response.status_code}")
+        return 1
+    if response.json()["mode"] != "answer":
+        print(f"FAIL: /ask refused: {response.json()['reason']}")
         return 1
 
-    answer = compose_answer(question, fused)
+    # /ask serves an answer only when all citations resolve to retrieved evidence,
+    # including refusal on invalid_citation_marker; it accounts before returning.
+    answer = AnswerResponse.model_validate(response.json())
+    if not answer.citations:
+        print("FAIL: the served answer carries no citations")
+        return 1
     print("\n=== ANSWER ===")
-    print(answer.text)
-    print("\n=== ACCOUNTING ===")
-    print(
-        f"model={answer.model} tokens_in={answer.tokens_in} "
-        f"tokens_out={answer.tokens_out} cost_gbp={answer.cost_gbp:.8f}"
-    )
-    print(f"cited={answer.cited_chunk_ids} fabricated={answer.fabricated_chunk_ids}")
-
-    if not answer.cited_chunk_ids:
-        print("FAIL: the answer carries no citations")
-        return 1
-    if answer.fabricated_chunk_ids:
-        print(f"FAIL: citations outside the retrieved set: {answer.fabricated_chunk_ids}")
-        return 1
+    print(answer.answer)
+    print(f"cited={[citation.chunk_id for citation in answer.citations]}")
+    print("accounting: embedding + generation recorded in query_log by /ask")
     print("OK: every citation is in the retrieved set (H1-18 done-when holds)")
     return 0
 

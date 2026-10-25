@@ -21,12 +21,36 @@ that file — the H1-20 done-when.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
 from wealthlens_analyst.answer.citations import Citation
+from wealthlens_analyst.budget.models import QueryDecision
+
+
+class MetricsResponse(BaseModel):
+    """Public /metrics/data JSON for the current UTC calendar month.
+
+    The window is [window_start, window_end), matching the budget spend month.
+    Latency uses answered+refused rows and nearest-rank p50/p95 (ceil(p*n)).
+    Costs include all decisions, including zero-cost rows and billed errors;
+    an even cost median averages the two middle values. Decimal costs serialize
+    as strings with eight places (ROUND_HALF_EVEN); empty samples are null.
+    Counts describe logged /ask requests, not all HTTP traffic (e.g. no 422s).
+    """
+
+    window_start: datetime = Field(description="Inclusive UTC calendar-month start.")
+    window_end: datetime = Field(description="Exclusive UTC calendar-month end.")
+    total_queries: int = Field(description="All query_log rows in the window; the cost/query denominator.")
+    decision_counts: dict[QueryDecision, int] = Field(description="Counts for all four decisions, including zeros.")
+    latency_sample_count: int = Field(description="Number of answered + refused rows used for latency.")
+    latency_p50_ms: int | None = Field(description="Nearest-rank 50th percentile latency in milliseconds.")
+    latency_p95_ms: int | None = Field(description="Nearest-rank 95th percentile latency in milliseconds.")
+    cost_mean_gbp: Decimal | None = Field(description="Mean GBP per logged query, string rounded to eight places.")
+    cost_median_gbp: Decimal | None = Field(description="Median GBP per logged query, string rounded to eight places.")
 
 
 class CitationModel(BaseModel):

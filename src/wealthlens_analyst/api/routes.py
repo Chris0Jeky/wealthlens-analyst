@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Annotated, Literal, Protocol
 
 import sqlalchemy as sa
@@ -49,9 +50,18 @@ from wealthlens_analyst.answer.compose import (
     EmptyGenerationError,
     compose_answer,
 )
-from wealthlens_analyst.api.schemas import AnswerResponse, CitationModel, RefusalResponse
+from wealthlens_analyst.api.schemas import (
+    AnswerResponse,
+    CitationModel,
+    MetricsResponse,
+    OverBudgetResponse,
+    RefusalResponse,
+)
+from wealthlens_analyst.budget.bounds import prompt_fits_bound
+from wealthlens_analyst.budget.metrics import read_monthly_metrics
+from wealthlens_analyst.budget.middleware import budget_guard
 from wealthlens_analyst.budget.models import QueryDecision, record_query
-from wealthlens_analyst.llm.client import EmbeddingResult, get_client
+from wealthlens_analyst.llm.client import EmbeddingResult, EmbeddingValidationError, get_client
 from wealthlens_analyst.retrieval.dense import search_dense_by_vector
 from wealthlens_analyst.retrieval.fts import ChunkHit, search_fts
 from wealthlens_analyst.retrieval.fuse_rrf import fuse_rrf
@@ -210,7 +220,7 @@ def get_registry(request: Request) -> Mapping[str, SourceMeta]:
     """Yield the source registry loaded once at startup (app.py's lifespan).
 
     A FastAPI dependency (like get_engine) so plain mode resolves a citation's
-    source name/URL from an in-memory map, never re-reading registries/sources.yml
+    source name/URL from an in-memory map, never re-reading data/corpus_manifest.yml
     per request; tests override it without touching disk.
     """
     registry: Mapping[str, SourceMeta] = request.app.state.registry
@@ -315,6 +325,9 @@ def _run_retrieval(
         lexical = search_fts(question, limit=_PER_RETRIEVER_LIMIT, engine=engine)
         embedded = get_client().embed([question])
         dense = search_dense_by_vector(embedded.vectors[0], limit=_PER_RETRIEVER_LIMIT, engine=engine)
+    except EmbeddingValidationError as exc:
+        _record_error_best_effort(engine, question, exc.result, started)
+        raise
     except SQLAlchemyError as exc:
         logger.warning("ask: retrieval backend unavailable: %s", exc)
         # A connection-level failure (OperationalError) dooms the accounting
@@ -391,7 +404,9 @@ def _ask_plain(
     # answerable). The gate signal is logged to query_log.gate_signal on every
     # row from here on, so refusal behaviour is auditable / calibratable.
     gate = evaluate_evidence(question, fused)
-    if not gate.answerable:
+    evidence = fused[:_COMPOSE_EVIDENCE_LIMIT]
+    fits_bound = prompt_fits_bound(question, evidence)
+    if not gate.answerable or not fits_bound:
         _record_or_500(
             engine,
             question=question,
@@ -401,11 +416,14 @@ def _ask_plain(
             started=started,
             gate_signal=gate.signal,
         )
-        return RefusalResponse(mode="refusal", question=question, reason=_NO_EVIDENCE_REASON)
+        reason = (
+            _NO_EVIDENCE_REASON if not gate.answerable else "The retrieved evidence exceeds the request cost limit."
+        )
+        return RefusalResponse(mode="refusal", question=question, reason=reason)
 
     composed: ComposedAnswer | None = None
     try:
-        composed = compose_answer(question, fused[:_COMPOSE_EVIDENCE_LIMIT])
+        composed = compose_answer(question, evidence)
         resolved = resolve_citations(composed, engine=engine, registry=registry)
     except EmptyGenerationError as exc:
         # Empty or truncated generation: real spend, unusable text. Record the
@@ -467,7 +485,7 @@ def _ask_plain(
     )
 
 
-@router.post("/ask")
+@router.post("/ask", responses={429: {"model": OverBudgetResponse}})
 def ask(
     request: AskRequest,
     engine: Annotated[Engine, Depends(get_engine)],
@@ -485,16 +503,29 @@ def ask(
 
     An unknown debug value is a 422 (the Literal), not a silent plain-mode
     fallthrough. The abstention gate (H1-21/H1-22) refuses weak evidence ahead of
-    generation; the budget guard (H1-27) will add the over_budget (429) variant
+    generation; the budget guard (H1-27) returns the over_budget (429) variant
     ahead of retrieval.
     """
     started = time.perf_counter()
-    if debug == "retrieval":
-        return _ask_debug_retrieval(request.question, engine, started)
-    return _ask_plain(request.question, engine, registry, started)
+    with budget_guard(engine, request.question):
+        if debug == "retrieval":
+            return _ask_debug_retrieval(request.question, engine, started)
+        return _ask_plain(request.question, engine, registry, started)
 
 
 @router.get("/metrics/data")
-def metrics_data() -> dict[str, object]:
-    """Serve p50/p95 latency and cost-per-query aggregates from query_log."""
-    raise NotImplementedError("H1-29: metrics endpoint not yet implemented")
+def metrics_data(engine: Annotated[Engine, Depends(get_engine)]) -> MetricsResponse:
+    """Serve current UTC month metrics. Free, cap-exempt, with no model calls or writes.
+
+    See MetricsResponse for the stable keys, populations and percentile rules.
+    Results are cached in process for 30 seconds per engine/UTC month; writes
+    may take that long to appear. Postgres reads have a local 2s statement timeout.
+    Database failures on refresh return 503, like /healthz.
+    """
+    try:
+        start, end, summary = read_monthly_metrics(engine)
+    except SQLAlchemyError as exc:
+        # Connection errors may contain credentials: never log exception text.
+        logger.warning("metrics: database unreachable")
+        raise HTTPException(status_code=503, detail="database unreachable") from exc
+    return MetricsResponse(window_start=start, window_end=end, **asdict(summary))

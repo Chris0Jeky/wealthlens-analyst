@@ -69,9 +69,9 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 - [ ] H1-24 (M5) Grow the golden set toward 100 (batch of ~30 drafted from corpus topics for Chris review; 10+ refusal cases) — done when ≥50 reviewed pairs exist (@Chris reviews). [deps: H1-02]
 - [ ] H1-25 (M5) Wire RAGAS in `evals/run_ragas.py` (LLM + embeddings injected via the seam) — done when `make eval-ragas` produces metric scores on the reviewed set. [deps: H1-22, H1-24]
 - [ ] H1-26 (M5) `make eval-report`: one committed markdown report combining deterministic + RAGAS + latency/cost percentiles — done when the report is generated from a single command and committed under `evals/reports/`. [deps: H1-23, H1-25]
-- [ ] H1-27 (M5) Budget enforcement: `budget/models.py` + `budget/middleware.py` live — cap from `BUDGET_MONTHLY_CAP_GBP`, fail-closed on missing budget row, 429 + structured refusal when exceeded — done when a test exhausts a seeded budget and asserts the 429 body. [deps: H1-15]
+- [x] H1-27 (M5) Budget enforcement: `budget/models.py` + `budget/middleware.py` live — cap from `BUDGET_MONTHLY_CAP_GBP`, fail-closed on missing budget row, 429 + structured refusal when exceeded — done when a test exhausts a seeded budget and asserts the 429 body. [deps: H1-15]
 - [ ] H1-28 (M5) Self-hosted Langfuse (docker-compose) + OTel tracing on /ask spans (retrieve, rerank, compose) — done when a local query produces a complete trace in Langfuse. [deps: H1-13]
-- [ ] H1-29 (M5) Metrics endpoint: p50/p95 latency + cost/query computed from `query_log` — done when the endpoint serves correct percentiles over seeded fixture rows (unit-tested math). [deps: H1-15, H1-27]
+- [x] H1-29 (M5) Metrics endpoint: p50/p95 latency + cost/query computed from `query_log` — done when the endpoint serves correct percentiles over seeded fixture rows (unit-tested math). [deps: H1-15, H1-27]
 
 ## M6 — ship
 
@@ -81,5 +81,5 @@ Local env: `docker compose up -d analyst-db` (port **15432**); use
 
 ## Standalone-repo follow-ups (seeded by the 2026-07-06 extraction)
 
-- [ ] H1-33 (M5) Migrate corpus identity from `registries/sources.yml` to `data/corpus_manifest.yml`: `load_source_registry` and the slice ingest read the manifest (sha256 + retrieval_date recorded by `scripts/fetch_corpus.py`), then the trimmed registry copy retires — done when the suite passes with `registries/` deleted. [deps: —]
+- [x] H1-33 (M5) Migrate corpus identity from `registries/sources.yml` to `data/corpus_manifest.yml`: `load_source_registry` and the slice ingest read the manifest (sha256 + retrieval_date recorded by `scripts/fetch_corpus.py`), then the trimmed registry copy retires — done when the suite passes with `registries/` deleted. [deps: —]
 - [ ] H1-34 (M6) Self-contained corpus acquisition: `scripts/fetch_corpus.py` covers every manifest entry (record the PENDING sha256s on first fetch) and the tabular CSVs are produced or vendored with provenance in-repo, removing the upstream wealthlens-hq pipeline dependency — done when `make fetch-corpus && make ingest-slice` works from a fresh clone against an empty database. [deps: H1-33]

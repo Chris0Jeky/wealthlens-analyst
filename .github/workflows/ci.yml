@@ -28,6 +28,25 @@ jobs:
   analyst:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        # Match docker-compose.yml's tag; actions remain SHA-pinned below.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: wealthlens
+          POSTGRES_PASSWORD: wealthlens
+          POSTGRES_DB: analyst
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wealthlens -d analyst"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Disposable CI database; these are test-only credentials, as in compose.
+      DATABASE_URL: postgresql+psycopg://wealthlens:wealthlens@localhost:5432/analyst
+      WEALTHLENS_TEST_DATABASE_URL: postgresql+psycopg://wealthlens:wealthlens@localhost:5432/analyst
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -44,8 +63,21 @@ jobs:
           python -m ruff format --check .
           python -m mypy
 
+      - name: Migrate Postgres
+        run: python -m alembic upgrade head
+
       - name: Tests
-        run: python -m pytest -q
+        run: python -m pytest -q -rs --junitxml=pytest-results.xml
+
+      - name: Require tests to run without skips
+        run: |
+          python - <<'PY'
+          from xml.etree import ElementTree
+
+          report = ElementTree.parse("pytest-results.xml")
+          if report.findall(".//testcase/skipped"):
+              raise SystemExit("CI must run every test, including the migrated Postgres cases; skips are forbidden")
+          PY
 
       - name: Golden schema validation + deterministic checks
         run: python evals/checks/deterministic.py

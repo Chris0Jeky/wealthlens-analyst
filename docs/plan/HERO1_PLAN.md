@@ -13,7 +13,7 @@ writeup #1 published + demo link sent to 10 named people. Nothing else counts.
 
 ONS Wealth and Assets Survey + HMRC distributional statistics (CGT statistics,
 tax receipts) + 3-5 IFS / Resolution Foundation reports. All registered in
-`registries/sources.yml` with URL, access date, format, licence. **Adding any
+`data/corpus_manifest.yml` with URL, access date, format, licence. **Adding any
 other source before the live URL exists is forbidden.**
 
 ## Milestones and acceptance criteria
@@ -25,8 +25,8 @@ other source before the live URL exists is forbidden.**
       scaffolding under `src/wealthlens_analyst/` (stubs import cleanly),
       eval skeleton with 20 DRAFT golden questions, Makefile + CI extensions,
       `.env.example`.
-- [ ] Corpus slice tagged in `registries/sources.yml` (`analyst_corpus: true`
-      on exactly the slice sources; IFS/RF report entries added with licence).
+- [ ] Corpus slice listed in `data/corpus_manifest.yml` (exactly the slice
+      sources; IFS/RF report entries added with licence).
 - [ ] Alembic migration drafts exist for `chunks` (provenance columns:
       source_id, document_id, section, page, span), `embeddings` (pgvector
       column + index), `budgets`, `query_log` (tokens, cost, latency, decision).

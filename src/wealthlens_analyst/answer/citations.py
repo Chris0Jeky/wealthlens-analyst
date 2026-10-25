@@ -4,7 +4,7 @@ A cited chunk_id is only served if it resolves to a real chunk in the corpus
 AND that chunk was part of the evidence the model was actually shown.
 Resolution attaches the ingestion-time provenance (source_id, document_id,
 section, page) and the source's citable name + URL from the registry
-(registries/sources.yml). Anything that does not resolve is stripped and
+(data/corpus_manifest.yml). Anything that does not resolve is stripped and
 flagged: a fabricated citation is worse than no answer, so this module never
 lets one reach the user.
 
@@ -34,7 +34,6 @@ Task H1-19 in tasks/hero1-backlog.md.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -42,11 +41,11 @@ from pathlib import Path
 from typing import Any
 
 import sqlalchemy as sa
-import yaml
 from sqlalchemy import Engine
 
 from wealthlens_analyst.answer.compose import ComposedAnswer
 from wealthlens_analyst.config import load_settings
+from wealthlens_analyst.corpus import default_manifest_path, load_corpus_manifest
 from wealthlens_analyst.db import engine_from_settings
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SourceMeta:
-    """A source's citable identity, from registries/sources.yml."""
+    """A source's citable identity, from data/corpus_manifest.yml."""
 
     name: str
     url: str
@@ -79,7 +78,7 @@ class Citation:
     section: str | None
     page: int | None
     span: str | None
-    url: str  # the registry source URL (registries/sources.yml)
+    url: str  # the registry source URL (data/corpus_manifest.yml)
     access_date: date  # when the source was fetched (chunks.access_date, NOT NULL)
 
 
@@ -210,70 +209,22 @@ def _resolve_citations(
 
 
 def _default_registry_path() -> Path:
-    """Locate ``registries/sources.yml`` at the repo root.
-
-    ``WEALTHLENS_REPO_ROOT`` overrides the search, for a non-editable install or
-    deployed service where the package no longer sits inside the checked-out
-    tree (the H1-30 shape). Otherwise walk up from this file to the ancestor
-    holding ``registries/sources.yml`` (the repo root; before the 2026-07-06
-    extraction the same walk found the shared monorepo registry). Mirrors
-    ingest.slice_corpus._find_repo_root exactly, so both the ingest and the
-    citation paths resolve the registry the same way.
-    """
-    override = os.environ.get("WEALTHLENS_REPO_ROOT")
-    if override:
-        return Path(override) / "registries" / "sources.yml"
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "registries" / "sources.yml").is_file():
-            return parent / "registries" / "sources.yml"
-    raise RuntimeError(
-        "could not locate registries/sources.yml in any ancestor directory; set WEALTHLENS_REPO_ROOT to override"
-    )
+    """Locate the corpus manifest used by both ingestion and citation resolution."""
+    return default_manifest_path()
 
 
 def load_source_registry(path: Path | None = None) -> dict[str, SourceMeta]:
-    """Load ``{source_id: SourceMeta}`` for the citable (analyst-corpus) sources.
+    """Load citable source titles and canonical URLs from the frozen manifest.
 
-    Only entries tagged ``analyst_corpus: true`` are loaded. A citation's
-    ``source_id`` is always a frozen-corpus source (the corpus is frozen until
-    v1 ships), so the many unrelated dashboard/pipeline sources in this shared
-    repo-root registry are irrelevant here — and skipping them keeps the
-    analyst's citation resolution decoupled from edits to sources it never
-    cites (a malformed dashboard-only entry must not break the analyst).
-
-    Fails loudly on a structural fault or a malformed/duplicated CORPUS entry:
-    a missing id/name/url, or a repeated id (which would otherwise silently
-    last-wins and attach the WRONG source name/URL to every citation for that
-    source). A citation needs correct provenance, so a broken corpus entry is a
-    hard error, not something to paper over — consistent with every other
-    integrity guard here. The request path (H1-20) loads this once at startup
-    and injects it; the standalone/CLI path lets it default.
+    Only entries tagged ``analyst_corpus: true`` are citable; an entry tagged false
+    (or untagged) is left out of the registry, so its chunks resolve as unknown.
+    Malformed or duplicate identities fail loudly before /ask startup.
     """
-    registry_path = path or _default_registry_path()
-    with registry_path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
-    if not isinstance(data, dict):
-        raise ValueError(f"{registry_path} is not a YAML mapping")
-    entries = data.get("sources")
-    if not isinstance(entries, list):
-        raise ValueError(f"{registry_path} has no top-level 'sources' list")
-    registry: dict[str, SourceMeta] = {}
-    for entry in entries:
-        # Ignore anything that is not a citable corpus source — the analyst
-        # neither cites nor validates unrelated (e.g. dashboard-only) sources,
-        # so their shape is not its concern.
-        if not isinstance(entry, dict) or not entry.get("analyst_corpus"):
-            continue
-        source_id = entry.get("id")
-        name = entry.get("name")
-        url = entry.get("url")
-        if not source_id or not name or not url:
-            raise ValueError(f"{registry_path}: analyst_corpus source entry missing id/name/url: {entry!r}")
-        key = str(source_id)
-        if key in registry:
-            raise ValueError(f"{registry_path}: duplicate analyst_corpus source id {source_id!r}")
-        registry[key] = SourceMeta(name=str(name), url=str(url))
-    return registry
+    return {
+        source_id: SourceMeta(name=entry["title"], url=entry["url"])
+        for source_id, entry in load_corpus_manifest(path or _default_registry_path()).items()
+        if entry.get("analyst_corpus")
+    }
 
 
 def resolve_citations(
