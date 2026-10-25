@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -216,8 +216,6 @@ def test_live_check_accounts_embedding_only_refusal(
     if evidence_state == "empty":
         harness.evidence.clear()
     else:
-        from dataclasses import replace
-
         harness.evidence[0] = replace(harness.evidence[0], text="x" * MAX_PROMPT_BYTES)
     assert harness.check.main() == 1
     assert harness.provider.calls == ["embed"]
@@ -258,3 +256,64 @@ def test_live_check_fails_if_ask_ever_serves_an_uncited_answer(
     monkeypatch.setattr(harness.check.AnswerResponse, "model_validate", strip_citations)
     assert harness.check.main() == 1
     assert "FAIL: the served answer carries no citations" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("harness", ["check_compose_live"], indirect=True)
+@pytest.mark.parametrize(
+    ("cited_id", "expected_exit"),
+    [(9118, 0), (9125, 0), (9126, 1), (9999, 1)],
+    ids=["first-evidence", "last-evidence", "retrieved-but-not-shown", "not-retrieved"],
+)
+def test_compose_check_independently_checks_generation_evidence(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cited_id: int,
+    expected_exit: int,
+) -> None:
+    # Nine fused hits: only the first eight reach generation. 9999 exists in
+    # the DB/registry but neither retriever returns it.
+    extra_hits = [
+        replace(harness.evidence[0], chunk_id=i, rank=rank) for rank, i in enumerate(range(9120, 9127), start=3)
+    ]
+    harness.evidence.extend(extra_hits)
+    chunks = sa.Table("chunks", sa.MetaData(), autoload_with=harness.engine)
+    with harness.engine.begin() as conn:
+        conn.execute(
+            chunks.insert(),
+            [
+                {
+                    "chunk_id": i,
+                    "source_id": "test-source",
+                    "document_id": "test-document",
+                    "section": "section",
+                    "text": "evidence",
+                    "token_count": 1,
+                    "access_date": date(2026, 1, 1),
+                }
+                for i in [*[hit.chunk_id for hit in extra_hits], 9999]
+            ],
+        )
+    harness.provider.text = f"A [chunk:{cited_id}]."
+    real_parse = compose._parse_citations
+
+    def miss_fabrications(text: str, evidence_ids: set[int]) -> tuple[list[int], list[int], str]:
+        cited, _fabricated, invalid = real_parse(text, evidence_ids)
+        return cited, [], invalid
+
+    # Simulate the regression this independent evaluator must catch: parsing
+    # stops flagging out-of-evidence ids, so /ask resolves and serves them.
+    monkeypatch.setattr(compose, "_parse_citations", miss_fabrications)
+    original_compose = routes.compose_answer
+    assert harness.check.main() == expected_exit
+    assert routes.compose_answer is original_compose
+    assert harness.provider.calls == ["embed", "complete"]
+    with harness.engine.connect() as conn:
+        row = conn.execute(sa.select(query_log_table)).mappings().one()
+    assert row["decision"] == "answered"
+    assert row["cost_gbp"] == Decimal("0.00100025")
+    assert middleware._in_flight_reserved == 0
+    output = capsys.readouterr().out
+    assert ("OK:" in output) == (expected_exit == 0)
+    if expected_exit:
+        assert f"FAIL: citations outside the generation evidence: [{cited_id}]" in output

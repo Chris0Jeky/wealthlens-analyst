@@ -67,7 +67,7 @@ class QueryMetrics:
 
 def summarize_queries(rows: Iterable[QueryMetric]) -> QueryMetrics:
     """Compute nearest-rank latency and exact Decimal mean/median cost. Pure."""
-    counts = dict.fromkeys(QueryDecision, 0)
+    counts = {decision: 0 for decision in QueryDecision}
     latencies: list[int] = []
     costs: list[Decimal] = []
     for row in rows:
