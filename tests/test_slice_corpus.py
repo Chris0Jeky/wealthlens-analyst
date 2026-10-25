@@ -441,6 +441,7 @@ def test_collect_reads_manifest_provenance_and_root_override(
                         "source_id": "ons-was-wealth",
                         "title": "Manifest title",
                         "url": "https://example.test/was",
+                        "analyst_corpus": True,
                         "retrieval_date": retrieval_date,
                         "access_date": "2000-01-01",
                         "sha256": "PENDING",
@@ -461,3 +462,25 @@ def test_collect_reads_manifest_provenance_and_root_override(
     assert chunk.source_id == "ons-was-wealth"
     assert chunk.access_date == date.fromisoformat(retrieval_date)
     assert not (tmp_path / "registries").exists()
+
+
+@pytest.mark.parametrize(
+    ("documents", "message"),
+    [
+        ([], "no document for tabular source_id 'ons-was-wealth'"),
+        ([{"source_id": "ons-was-wealth", "title": "T", "url": "https://t"}], "'ons-was-wealth' has no retrieval_date"),
+    ],
+)
+def test_collect_tabular_chunks_names_source_id_when_manifest_entry_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, documents: list[dict[str, str]], message: str
+) -> None:
+    """A tabular source missing from the manifest, or lacking retrieval_date, fails with a ValueError naming it."""
+    import yaml
+
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+    (processed / "ons_wealth_by_decile.csv").write_text("decile,total_wealth_bn\n1st,13.9\n", encoding="utf-8")
+    (tmp_path / "data" / "corpus_manifest.yml").write_text(yaml.safe_dump({"documents": documents}), encoding="utf-8")
+    monkeypatch.setenv("WEALTHLENS_REPO_ROOT", str(tmp_path))
+    with pytest.raises(ValueError, match=message):
+        collect_tabular_chunks(processed_dir=processed)
