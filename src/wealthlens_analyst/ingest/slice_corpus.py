@@ -524,7 +524,11 @@ def collect_tabular_chunks(processed_dir: Path | None = None) -> list[Chunk]:
             continue
         with csv_path.open(newline="", encoding="utf-8-sig") as handle:
             rows = list(csv.DictReader(handle))
-        entry = documents[spec.source_id]
+        entry = documents.get(spec.source_id)
+        if entry is None:
+            raise ValueError(f"corpus manifest has no document for tabular source_id {spec.source_id!r}")
+        if not entry.get("retrieval_date"):
+            raise ValueError(f"corpus manifest document {spec.source_id!r} has no retrieval_date")
         access_date = date.fromisoformat(str(entry["retrieval_date"]))
         rendered = render_table_chunks(rows, spec, access_date=access_date)
         logger.info("tabular source %s: %d chunk(s) from %d row(s)", spec.source_id, len(rendered), len(rows))

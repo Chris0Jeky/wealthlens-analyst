@@ -39,6 +39,8 @@ def load_corpus_manifest(path: Path | None = None) -> dict[str, dict[str, Any]]:
         ):
             raise ValueError(f"{manifest_path}: document entry missing source_id/title/url: {entry!r}")
         source_id = entry["source_id"]
+        if source_id != source_id.strip():
+            raise ValueError(f"{manifest_path}: source_id {source_id!r} has leading or trailing whitespace")
         if source_id in documents:
             raise ValueError(f"{manifest_path}: duplicate source_id {source_id!r}")
         documents[source_id] = entry

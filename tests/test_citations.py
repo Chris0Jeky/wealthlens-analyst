@@ -242,13 +242,13 @@ def test_load_source_registry_maps_manifest_id_to_title_and_url(tmp_path: Path) 
     manifest = tmp_path / "corpus_manifest.yml"
     manifest.write_text(
         "documents:\n"
-        "  - source_id: a\n    title: A source\n    url: https://a\n"
+        "  - source_id: a\n    title: A source\n    url: https://a\n    analyst_corpus: true\n"
         "  - source_id: b\n    title: B source\n    url: https://b\n    analyst_corpus: false\n",
         encoding="utf-8",
     )
+    # b is tagged analyst_corpus: false, so it must not be citable.
     assert load_source_registry(manifest) == {
         "a": SourceMeta("A source", "https://a"),
-        "b": SourceMeta("B source", "https://b"),
     }
 
 
@@ -260,6 +260,8 @@ def test_load_source_registry_maps_manifest_id_to_title_and_url(tmp_path: Path) 
         ("documents: [null]", "missing source_id/title/url"),
         ("documents: [{source_id: a, title: A}]", "missing source_id/title/url"),
         ("documents: [{source_id: a, title: ' ', url: https://a}]", "missing source_id/title/url"),
+        ("documents: [{source_id: ' a', title: A, url: https://a}]", "leading or trailing whitespace"),
+        ("documents: [{source_id: 'a ', title: A, url: https://a}]", "leading or trailing whitespace"),
         (
             "documents:\n"
             "  - {source_id: dup, title: First, url: https://first}\n"

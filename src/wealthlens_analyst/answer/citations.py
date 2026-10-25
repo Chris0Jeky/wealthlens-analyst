@@ -216,12 +216,14 @@ def _default_registry_path() -> Path:
 def load_source_registry(path: Path | None = None) -> dict[str, SourceMeta]:
     """Load citable source titles and canonical URLs from the frozen manifest.
 
-    Every document belongs to the slice; legacy analyst_corpus tags do not filter
-    it. Malformed or duplicate identities fail loudly before /ask startup.
+    Only entries tagged ``analyst_corpus: true`` are citable; an entry tagged false
+    (or untagged) is left out of the registry, so its chunks resolve as unknown.
+    Malformed or duplicate identities fail loudly before /ask startup.
     """
     return {
         source_id: SourceMeta(name=entry["title"], url=entry["url"])
         for source_id, entry in load_corpus_manifest(path or _default_registry_path()).items()
+        if entry.get("analyst_corpus")
     }
 
 
