@@ -12,6 +12,7 @@ input, 500 generation/accounting failure, 503 unreachable DB).
 
 from __future__ import annotations
 
+import json
 import sys
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
@@ -831,6 +832,45 @@ def test_ask_question_with_nul_byte_is_422_not_a_db_error(harness: _Harness) -> 
     response = harness.client.post("/ask?debug=retrieval", json={"question": "wealth\x00share"})
     assert response.status_code == 422
     assert harness.calls == {}
+
+
+@pytest.mark.parametrize("path", ["/ask", "/ask?debug=retrieval"])
+@pytest.mark.parametrize(
+    "question",
+    ["\ud800", "\udfff", "wealth\ud800share", "x" * 2000 + "\udfff", ["\ud800"]],
+    ids=["high-surrogate", "low-surrogate", "embedded-surrogate", "over-length", "wrong-type"],
+)
+def test_ask_rejects_invalid_unicode_before_spending(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, path: str, question: Any
+) -> None:
+    def no_budget(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Invalid input must be rejected before budget admission")
+
+    monkeypatch.setattr(routes, "budget_guard", no_budget)
+    # Send real JSON escapes: a client can submit these even though the decoded
+    # string cannot be represented in UTF-8/Postgres text.
+    response = TestClient(harness.app, raise_server_exceptions=False).post(
+        path,
+        content=json.dumps({"question": question}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "question"]
+    response.content.decode("utf-8")
+    assert harness.calls == {}
+    assert harness.recorded == []
+
+
+@pytest.mark.parametrize("question", ["wealth in £", "财富", "wealth 💷"])
+def test_ask_accepts_valid_unicode_including_escaped_surrogate_pairs(harness: _Harness, question: str) -> None:
+    response = harness.client.post(
+        "/ask?debug=retrieval",
+        content=json.dumps({"question": question}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json()["question"] == question
+    assert harness.calls["embed"]["texts"] == [question]
 
 
 def test_ask_connection_failure_is_503_and_skips_the_doomed_error_row(

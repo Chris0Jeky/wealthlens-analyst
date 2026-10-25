@@ -14,12 +14,15 @@ Run locally with `make dev` (uvicorn, 127.0.0.1:8100).
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 
 from wealthlens_analyst.answer.citations import load_source_registry
 from wealthlens_analyst.api.routes import router
@@ -84,6 +87,16 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
     app.include_router(router)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError) -> Response:
+        # Invalid Unicode can appear in echoed input, including nested values.
+        # Escape it so serializing the intended 422 cannot itself raise a 500.
+        return Response(
+            status_code=422,
+            content=json.dumps({"detail": jsonable_encoder(exc.errors())}, ensure_ascii=True, allow_nan=False),
+            media_type="application/json",
+        )
 
     @app.exception_handler(BudgetRefusal)
     async def budget_refusal_handler(request: Request, exc: BudgetRefusal) -> JSONResponse:
