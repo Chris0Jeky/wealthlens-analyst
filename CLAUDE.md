@@ -4,10 +4,9 @@ Citation-first RAG service over a **frozen 8-source slice** of official UK wealt
 (ONS WAS, HMRC distributional, IFS/RF reports). `POST /ask` runs Postgres FTS ∥ pgvector dense
 → RRF fusion (k=60) → abstention gate → cited generation → citation resolution, and serves an
 answer **only if every citation resolves**; otherwise an honest structured refusal. Every
-request that *reaches the handler* writes one `query_log` accounting row (tokens, cost,
-latency, decision) — a request rejected by FastAPI validation (422: malformed question,
-unknown `debug` value) never reaches it and logs nothing, so `query_log` is not a record of
-all inbound traffic.
+served post-admission outcome requires a `query_log` row or fails with 500. Admission and
+failure paths can omit rows or write best effort; the accounting boundary is documented in
+[README Status](README.md#status). `query_log` is not a complete traffic or invocation ledger.
 Python 3.11 · FastAPI · SQLAlchemy Core · Alembic · pytest · ruff + **strict mypy**.
 
 Global laws (review, merge, tiers, worktrees) live in `~/.claude/rules/laws.md` and are injected
@@ -102,8 +101,8 @@ green. Pin the stub you are about to fill before you fill it.
   silently, so reading the diff, not the grep, is what actually holds the metering seam.
 - **Never add a corpus source** before its live URL exists; corpus identity lives in
   `data/corpus_manifest.yml` and is frozen until v1 ships.
-- **Never skip the metering path** — every model call is accounted; a served outcome whose
-  `query_log` row cannot be written must 500, not serve unmetered spend.
+- **Preserve served-outcome metering** - a served post-admission outcome whose `query_log`
+  row cannot be written must 500. Use the README accounting boundary when interpreting missing rows.
 - Embedding dimension **1536 is baked into migration `0002_embeddings`**; pointing
   `EMBEDDING_MODEL` at a different width needs a new revision, not an env edit.
 - Migrations are hand-written; `target_metadata = None`, so `--autogenerate` produces nothing.
