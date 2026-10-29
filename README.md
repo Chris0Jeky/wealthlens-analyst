@@ -1,6 +1,6 @@
 # WealthLens Analyst
 
-> Every number cited, every refusal calibrated, every query costed.
+> Citation-first answers, honest refusals, accounted query spend.
 
 Evidence-backed research analyst over official UK wealth statistics — the ONS
 Wealth and Assets Survey, HMRC distributional statistics, and selected
@@ -33,8 +33,10 @@ citation resolution against the frozen source registry. Serving policy: an
 answer is served only when EVERY citation resolves; if any cited id is
 fabricated or unverifiable the request is refused — a citation-first product
 never serves an uncited claim. `POST /ask?debug=retrieval` returns the fused
-candidate list (component ranks, no generation). Every request writes a
-query_log accounting row (embed + generation spend, latency, decision).
+candidate list (component ranks, no generation). Requests reaching the `/ask`
+handler are accounted in `query_log` (embed + generation spend, latency,
+decision). FastAPI validation failures (422) never reach that handler and create
+no accounting row, so `query_log` does not count all inbound HTTP traffic.
 
 Plan: `docs/plan/HERO1_PLAN.md` · backlog: `tasks/hero1-backlog.md` ·
 decisions: `docs/adr/0001-0003` · agent contract: `CLAUDE.md`.
