@@ -33,10 +33,14 @@ citation resolution against the frozen source registry. Serving policy: an
 answer is served only when EVERY citation resolves; if any cited id is
 fabricated or unverifiable the request is refused — a citation-first product
 never serves an uncited claim. `POST /ask?debug=retrieval` returns the fused
-candidate list (component ranks, no generation). Requests reaching the `/ask`
-handler are accounted in `query_log` (embed + generation spend, latency,
-decision). FastAPI validation failures (422) never reach that handler and create
-no accounting row, so `query_log` does not count all inbound HTTP traffic.
+candidate list (component ranks, no generation). After budget admission, served
+answers, refusals and retrieval diagnostics require a `query_log` row (request-level
+embed + generation spend, latency, decision); a failed write returns 500 instead.
+Admission-refusal and error accounting is best effort or omitted: admission timeout
+or database failure skips the refusal row, and retrieval connection failures skip
+error accounting. FastAPI validation failures (422) never reach the handler and
+create no row. `query_log` is therefore not a complete HTTP-traffic, handler-invocation
+or model-call ledger; missing rows cannot be interpreted as absent requests or spend.
 
 Plan: `docs/plan/HERO1_PLAN.md` · backlog: `tasks/hero1-backlog.md` ·
 decisions: `docs/adr/0001-0003` · agent contract: `CLAUDE.md`.
